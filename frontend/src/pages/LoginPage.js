@@ -1,6 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+
+function getBranding() {
+  try {
+    const raw = localStorage.getItem('comissoes_config');
+    if (!raw) return { nome: 'ComissõesPRO', logo: null };
+    return JSON.parse(raw);
+  } catch {
+    return { nome: 'ComissõesPRO', logo: null };
+  }
+}
 
 export default function LoginPage() {
   const { login, user } = useAuth();
@@ -8,13 +18,21 @@ export default function LoginPage() {
   const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [branding, setBranding] = useState(getBranding());
+
+  useEffect(() => {
+    document.title = branding.nome || 'ComissõesPRO';
+    const handler = () => setBranding(getBranding());
+    window.addEventListener('config-updated', handler);
+    return () => window.removeEventListener('config-updated', handler);
+  }, [branding.nome]);
 
   if (user) { navigate('/'); return null; }
 
   const submit = async e => {
     e.preventDefault(); setError(''); setLoading(true);
     try { await login(form.username, form.password); navigate('/'); }
-    catch (err) { setError(err.response?.data?.error || 'Erro ao fazer login'); }
+    catch (err) { setError(err.response?.data?.error || 'Usuário ou senha inválidos'); }
     finally { setLoading(false); }
   };
 
@@ -22,8 +40,14 @@ export default function LoginPage() {
     <div className="login-wrap">
       <div className="login-box">
         <div className="login-logo">
-          <div className="icon">⛽</div>
-          <h1>ComissõesPRO</h1>
+          {branding.logo ? (
+            <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'center' }}>
+              <img src={branding.logo} alt="logo" style={{ maxHeight: 56, maxWidth: 180, objectFit: 'contain' }} />
+            </div>
+          ) : (
+            <div className="icon">⛽</div>
+          )}
+          <h1>{branding.nome || 'ComissõesPRO'}</h1>
           <p>Sistema de Comissionamento</p>
         </div>
         {error && <div className="alert alert-error">{error}</div>}
@@ -43,10 +67,6 @@ export default function LoginPage() {
             {loading ? 'Entrando…' : 'Entrar'}
           </button>
         </form>
-        <div style={{ marginTop: 20, padding: 12, background: 'var(--surface2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--text-muted)' }}>
-          <strong style={{ color: 'var(--text-dim)' }}>Acesso padrão:</strong><br />
-          admin / admin123
-        </div>
       </div>
     </div>
   );

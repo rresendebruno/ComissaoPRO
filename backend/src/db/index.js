@@ -13,6 +13,7 @@ async function query(text, params) {
 }
 
 async function migrate() {
+  // Tabelas principais
   await query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -47,8 +48,7 @@ async function migrate() {
       periodo_id INTEGER REFERENCES periodos(id) ON DELETE CASCADE,
       posto_id   INTEGER REFERENCES postos(id)   ON DELETE CASCADE,
       nome       VARCHAR(255) NOT NULL,
-      tipo       VARCHAR(20)  NOT NULL CHECK (tipo IN ('gerente','trocador')),
-      UNIQUE(periodo_id, posto_id, nome)
+      tipo       VARCHAR(20)  NOT NULL CHECK (tipo IN ('gerente','trocador'))
     );
 
     CREATE TABLE IF NOT EXISTS metas (
@@ -93,6 +93,32 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_vendas_funcionario ON vendas(funcionario);
 
     ALTER TABLE metas ADD COLUMN IF NOT EXISTS meta_posto NUMERIC(15,2) NOT NULL DEFAULT 0;
+  `);
+
+  // Migração da constraint de periodo_funcionarios:
+  // A constraint antiga era UNIQUE(periodo_id, posto_id, nome) — impedia cadastrar o mesmo
+  // funcionário como gerente E trocador. A nova inclui o tipo para permitir ambos.
+  await query(`
+    DO $migration$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'periodo_funcionarios_periodo_id_posto_id_nome_key'
+      ) THEN
+        ALTER TABLE periodo_funcionarios
+          DROP CONSTRAINT periodo_funcionarios_periodo_id_posto_id_nome_key;
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'periodo_funcionarios_periodo_posto_nome_tipo_key'
+      ) THEN
+        ALTER TABLE periodo_funcionarios
+          ADD CONSTRAINT periodo_funcionarios_periodo_posto_nome_tipo_key
+          UNIQUE (periodo_id, posto_id, nome, tipo);
+      END IF;
+    END
+    $migration$;
   `);
 
   const { rows } = await query(`SELECT id FROM users WHERE username = 'admin'`);

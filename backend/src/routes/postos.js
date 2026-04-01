@@ -43,7 +43,7 @@ router.delete('/:id', auth, adminOnly, async (req, res) => {
   res.json({ success: true });
 });
 
-// Produtos especiais do posto (permanecem no posto, não no período)
+// Produtos especiais do posto
 router.get('/:id/produtos-especiais', auth, async (req, res) => {
   const { rows } = await query(
     'SELECT * FROM produtos_especiais WHERE posto_id=$1 ORDER BY nome_produto',
@@ -55,11 +55,19 @@ router.get('/:id/produtos-especiais', auth, async (req, res) => {
 router.post('/:id/produtos-especiais', auth, adminOnly, async (req, res) => {
   const { nome_produto, comissao_frentista, comissao_trocador, comissao_gerente } = req.body;
   if (!nome_produto) return res.status(400).json({ error: 'Nome do produto obrigatório' });
+
+  // Validação: verificar se já existe produto ativo com o mesmo nome neste posto
+  const { rows: existente } = await query(
+    `SELECT id FROM produtos_especiais WHERE posto_id=$1 AND LOWER(TRIM(nome_produto))=LOWER(TRIM($2)) AND ativo=true`,
+    [req.params.id, nome_produto.trim()]
+  );
+  if (existente.length > 0) {
+    return res.status(409).json({ error: `Produto "${nome_produto.trim()}" já está cadastrado como especial neste posto.` });
+  }
+
   const { rows } = await query(
     `INSERT INTO produtos_especiais (posto_id, nome_produto, comissao_frentista, comissao_trocador, comissao_gerente)
      VALUES ($1,$2,$3,$4,$5)
-     ON CONFLICT (posto_id, nome_produto) DO UPDATE
-       SET comissao_frentista=$3, comissao_trocador=$4, comissao_gerente=$5, ativo=true
      RETURNING *`,
     [req.params.id, nome_produto.trim(), comissao_frentista || 0, comissao_trocador || 0, comissao_gerente || 0]
   );
@@ -68,6 +76,18 @@ router.post('/:id/produtos-especiais', auth, adminOnly, async (req, res) => {
 
 router.put('/:postoId/produtos-especiais/:id', auth, adminOnly, async (req, res) => {
   const { nome_produto, comissao_frentista, comissao_trocador, comissao_gerente, ativo } = req.body;
+
+  // Se está atualizando o nome, verificar duplicata (exceto o próprio registro)
+  if (nome_produto) {
+    const { rows: existente } = await query(
+      `SELECT id FROM produtos_especiais WHERE posto_id=$1 AND LOWER(TRIM(nome_produto))=LOWER(TRIM($2)) AND ativo=true AND id != $3`,
+      [req.params.postoId, nome_produto.trim(), req.params.id]
+    );
+    if (existente.length > 0) {
+      return res.status(409).json({ error: `Produto "${nome_produto.trim()}" já está cadastrado como especial neste posto.` });
+    }
+  }
+
   const { rows } = await query(
     `UPDATE produtos_especiais SET
        nome_produto       = COALESCE($1, nome_produto),

@@ -45,6 +45,15 @@ router.put('/:id', auth, adminOnly, async (req, res) => {
   res.json(rows[0]);
 });
 
+// ── DELETE PERÍODO ────────────────────────────────────────────────────────────
+
+router.delete('/:id', auth, adminOnly, async (req, res) => {
+  const { rows } = await query('SELECT id FROM periodos WHERE id=$1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Período não encontrado' });
+  await query('DELETE FROM periodos WHERE id=$1', [req.params.id]);
+  res.json({ success: true });
+});
+
 // ── GERENTES & TROCADORES DO PERÍODO ─────────────────────────────────────────
 
 router.get('/:id/funcionarios', auth, async (req, res) => {
@@ -65,11 +74,25 @@ router.post('/:id/funcionarios', auth, adminOnly, async (req, res) => {
     return res.status(400).json({ error: 'posto_id, nome e tipo são obrigatórios' });
   if (!['gerente','trocador'].includes(tipo))
     return res.status(400).json({ error: 'tipo deve ser gerente ou trocador' });
+
+  // Verifica se já existe este par (período, posto, nome, tipo) — sem ON CONFLICT que sobrescreveria
+  const { rows: existe } = await query(
+    `SELECT id FROM periodo_funcionarios
+     WHERE periodo_id=$1 AND posto_id=$2 AND LOWER(TRIM(nome))=LOWER(TRIM($3)) AND tipo=$4`,
+    [req.params.id, posto_id, nome.trim(), tipo]
+  );
+  if (existe.length > 0) {
+    const { rows: existing } = await query(
+      `SELECT pf.*, p.codigo FROM periodo_funcionarios pf
+       JOIN postos p ON p.id=pf.posto_id WHERE pf.id=$1`,
+      [existe[0].id]
+    );
+    return res.status(201).json(existing[0]);
+  }
+
   const { rows } = await query(
     `INSERT INTO periodo_funcionarios (periodo_id, posto_id, nome, tipo)
-     VALUES ($1,$2,$3,$4)
-     ON CONFLICT (periodo_id, posto_id, nome) DO UPDATE SET tipo=$4
-     RETURNING *`,
+     VALUES ($1,$2,$3,$4) RETURNING *`,
     [req.params.id, posto_id, nome.trim(), tipo]
   );
   res.status(201).json(rows[0]);
@@ -155,20 +178,22 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
   if (!rows_data || rows_data.length < 2)
     return res.status(400).json({ error: 'Planilha vazia ou sem dados' });
 
-  // Buscar postos e funcionários do período
   const { rows: postos }  = await query('SELECT * FROM postos WHERE ativo=true');
   const { rows: funcsEsp } = await query(
     'SELECT * FROM periodo_funcionarios WHERE periodo_id=$1', [periodoId]
   );
 
-  // índice de postos por código
   const postoIdx = {};
   for (const p of postos) postoIdx[p.codigo.toLowerCase()] = p;
 
-  // índice de tipo de funcionário: "posto_id|nome_lower" → tipo
+  // Se a pessoa tem cadastro como gerente E trocador, nas vendas ela entra como 'gerente'
+  // O motor de cálculo detecta automaticamente a acumulação via trocadores[]
   const funcEspIdx = {};
   for (const f of funcsEsp) {
-    funcEspIdx[`${f.posto_id}|${f.nome.trim().toLowerCase()}`] = f.tipo;
+    const k = `${f.posto_id}|${f.nome.trim().toLowerCase()}`;
+    if (!funcEspIdx[k] || f.tipo === 'gerente') {
+      funcEspIdx[k] = f.tipo;
+    }
   }
 
   const vendas = [];
@@ -203,7 +228,7 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
   }
 
   if (!vendas.length)
-    return res.status(400).json({ error: 'Nenhuma venda válida. Verifique se os códigos da coluna A correspondem aos postos cadastrados.' });
+    return res.status(400).json({ error: 'Nenhuma venda válida.' });
 
   await query('DELETE FROM vendas WHERE periodo_id=$1', [periodoId]);
 
@@ -282,21 +307,59 @@ router.get('/:id/vendas', auth, async (req, res) => {
   const conditions = ['v.periodo_id=$1'];
   const params     = [req.params.id];
   let i = 2;
-  if (posto_id)    { conditions.push(`v.posto_id=$${i++}`);            params.push(posto_id); }
-  if (funcionario) { conditions.push(`v.funcionario ILIKE $${i++}`);   params.push(`%${funcionario}%`); }
+  if (posto_id)    { conditions.push(`v.posto_id=$${i++}`);           params.push(posto_id); }
+  if (funcionario) { conditions.push(`v.funcionario ILIKE $${i++}`);  params.push(`%${funcionario}%`); }
 
+  const limitVal = Math.min(Math.max(parseInt(limit) || 50, 1), 10000);
   const where  = conditions.join(' AND ');
   const { rows: total } = await query(`SELECT COUNT(*) FROM vendas v WHERE ${where}`, params);
-  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const offset = (parseInt(page) - 1) * limitVal;
   const { rows } = await query(
     `SELECT v.*, p.codigo as posto_codigo
      FROM vendas v JOIN postos p ON p.id=v.posto_id
      WHERE ${where}
      ORDER BY p.codigo, v.funcionario
      LIMIT $${i} OFFSET $${i+1}`,
-    [...params, parseInt(limit), offset]
+    [...params, limitVal, offset]
   );
-  res.json({ data: rows, total: parseInt(total[0].count), page: parseInt(page), limit: parseInt(limit) });
+  res.json({ data: rows, total: parseInt(total[0].count), page: parseInt(page), limit: limitVal });
+});
+
+// ── TODOS OS FUNCIONÁRIOS DO PERÍODO ─────────────────────────────────────────
+
+router.get('/:id/todos-funcionarios', auth, async (req, res) => {
+  const periodoId = req.params.id;
+
+  const { rows: vendasFuncs } = await query(
+    `SELECT DISTINCT v.funcionario as nome, v.tipo_funcionario as tipo,
+            p.codigo as posto_codigo, v.posto_id
+     FROM vendas v
+     JOIN postos p ON p.id = v.posto_id
+     WHERE v.periodo_id = $1`,
+    [periodoId]
+  );
+
+  const { rows: cadastrados } = await query(
+    `SELECT pf.nome, pf.tipo, p.codigo as posto_codigo, pf.posto_id
+     FROM periodo_funcionarios pf
+     JOIN postos p ON p.id = pf.posto_id
+     WHERE pf.periodo_id = $1`,
+    [periodoId]
+  );
+
+  const seen = new Set();
+  const todos = [];
+
+  for (const f of [...vendasFuncs, ...cadastrados]) {
+    const key = `${f.posto_codigo}|${f.nome.trim().toLowerCase()}|${f.tipo}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      todos.push({ nome: f.nome.trim(), tipo: f.tipo, posto_codigo: f.posto_codigo, posto_id: Number(f.posto_id) });
+    }
+  }
+
+  todos.sort((a, b) => a.posto_codigo.localeCompare(b.posto_codigo) || a.nome.localeCompare(b.nome));
+  res.json(todos);
 });
 
 module.exports = router;

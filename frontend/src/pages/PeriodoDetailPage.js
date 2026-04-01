@@ -15,10 +15,24 @@ export default function PeriodoDetailPage() {
   const [metas, setMetas] = useState([]);
   const [postos, setPostos] = useState([]);
   const [funcionarios, setFuncionarios] = useState([]);
-  const [vendas, setVendas] = useState([]);
-  const [vendasTotal, setVendasTotal] = useState(0);
   const [tab, setTab] = useState('metas');
   const [loading, setLoading] = useState(true);
+
+  // Vendas
+  const [vendas, setVendas] = useState([]);
+  const [vendasTotal, setVendasTotal] = useState(0);
+  const [filterPosto, setFilterPosto] = useState('');
+  const [filterFunc, setFilterFunc] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
+  // Produtos especiais inline
+  const [produtosEspeciais, setProdutosEspeciais] = useState([]);
+  const [showProdModal, setShowProdModal] = useState(false);
+  const [prodVenda, setProdVenda] = useState(null);
+  const [prodForm, setProdForm] = useState({ comissao_frentista: '', comissao_trocador: '', comissao_gerente: '' });
+  const [savingProd, setSavingProd] = useState(false);
+  const [prodError, setProdError] = useState('');
 
   // Import
   const [importing, setImporting] = useState(false);
@@ -31,7 +45,7 @@ export default function PeriodoDetailPage() {
   const [editMeta, setEditMeta] = useState(null);
   const [savingMeta, setSavingMeta] = useState(false);
 
-  // Funcionario modal
+  // Funcionário modal — suporta 'gerente' | 'trocador' | 'ambos'
   const [showFuncModal, setShowFuncModal] = useState(false);
   const [funcForm, setFuncForm] = useState({ posto_id: '', nome: '', tipo: 'trocador' });
   const [editFunc, setEditFunc] = useState(null);
@@ -39,11 +53,26 @@ export default function PeriodoDetailPage() {
   const [deleteFunc, setDeleteFunc] = useState(null);
   const [funcError, setFuncError] = useState('');
 
-  // Vendas filter
-  const [filterPosto, setFilterPosto] = useState('');
-  const [page, setPage] = useState(1);
+  // Desqualificados — carregados do endpoint /todos-funcionarios
+  const [todosFuncionarios, setTodosFuncionarios] = useState([]);
+  const [loadingDesq, setLoadingDesq] = useState(false);
+  const [desqualificados, setDesqualificados] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`desq_${id}`) || '{}'); } catch { return {}; }
+  });
+  const [filterDesqPosto, setFilterDesqPosto] = useState('');
+  const [motivoModal, setMotivoModal] = useState(null); // { key, nome }
+  const [motivoTexto, setMotivoTexto] = useState('');
+
+  // Excluir período
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const isAdmin = user?.role === 'admin';
+
+  const saveDesq = (next) => {
+    setDesqualificados(next);
+    localStorage.setItem(`desq_${id}`, JSON.stringify(next));
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -62,16 +91,34 @@ export default function PeriodoDetailPage() {
   }, [id]);
 
   const loadVendas = useCallback(() => {
-    const params = { page, limit: 50 };
+    const params = { page, limit: pageSize };
     if (filterPosto) params.posto_id = filterPosto;
+    if (filterFunc) params.funcionario = filterFunc;
     axios.get(`${API}/periodos/${id}/vendas`, { params }).then(r => {
       setVendas(r.data.data);
       setVendasTotal(r.data.total);
     });
-  }, [id, page, filterPosto]);
+  }, [id, page, pageSize, filterPosto, filterFunc]);
+
+  const loadProdutosEspeciais = useCallback(() => {
+    if (!postos.length) return;
+    Promise.all(postos.map(p => axios.get(`${API}/postos/${p.id}/produtos-especiais`)))
+      .then(results => {
+        const all = results.flatMap((r, i) => r.data.map(pe => ({ ...pe, posto_codigo: postos[i].codigo })));
+        setProdutosEspeciais(all);
+      });
+  }, [postos]);
+
+  const loadTodosFuncionarios = useCallback(() => {
+    setLoadingDesq(true);
+    axios.get(`${API}/periodos/${id}/todos-funcionarios`)
+      .then(r => setTodosFuncionarios(r.data))
+      .finally(() => setLoadingDesq(false));
+  }, [id]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (tab === 'vendas') loadVendas(); }, [tab, loadVendas]);
+  useEffect(() => { if (tab === 'vendas') { loadVendas(); loadProdutosEspeciais(); } }, [tab, loadVendas, loadProdutosEspeciais]);
+  useEffect(() => { if (tab === 'desqualificados') loadTodosFuncionarios(); }, [tab, loadTodosFuncionarios]);
 
   // ── Import
   const doImport = async () => {
@@ -79,10 +126,23 @@ export default function PeriodoDetailPage() {
     try {
       const r = await axios.post(`${API}/periodos/${id}/importar`, { sheets_url: importUrl || undefined });
       setImportResult({ ok: true, msg: r.data.message });
-      load(); if (tab === 'vendas') loadVendas();
+      load();
+      if (tab === 'vendas') loadVendas();
     } catch (e) {
       setImportResult({ ok: false, msg: e.response?.data?.error || 'Erro ao importar' });
     } finally { setImporting(false); }
+  };
+
+  // ── Excluir período
+  const doDelete = async () => {
+    setDeleting(true);
+    try {
+      await axios.delete(`${API}/periodos/${id}`);
+      navigate('/periodos');
+    } catch (e) {
+      alert(e.response?.data?.error || 'Erro ao excluir período');
+      setDeleting(false);
+    }
   };
 
   // ── Metas
@@ -95,18 +155,48 @@ export default function PeriodoDetailPage() {
     finally { setSavingMeta(false); }
   };
 
-  // ── Funcionarios
+  // ── Funcionários — suporte a 'ambos'
+  // O backend agora suporta a unique constraint (periodo, posto, nome, tipo)
+  // então podemos inserir o mesmo nome com tipos diferentes sem conflito
   const saveFunc = async () => {
     setSavingFunc(true); setFuncError('');
     try {
-      if (editFunc) {
-        await axios.put(`${API}/periodos/${id}/funcionarios/${editFunc.id}`, funcForm);
+      if (funcForm.tipo === 'ambos') {
+        // Cria/atualiza como gerente
+        await axios.post(`${API}/periodos/${id}/funcionarios`, {
+          posto_id: funcForm.posto_id,
+          nome: funcForm.nome,
+          tipo: 'gerente',
+        });
+        // Cria/atualiza como trocador
+        await axios.post(`${API}/periodos/${id}/funcionarios`, {
+          posto_id: funcForm.posto_id,
+          nome: funcForm.nome,
+          tipo: 'trocador',
+        });
+        // Se estava editando um registro específico (tipo diferente de ambos), remove o antigo
+        if (editFunc && editFunc.tipo !== 'gerente' && editFunc.tipo !== 'trocador') {
+          await axios.delete(`${API}/periodos/${id}/funcionarios/${editFunc.id}`);
+        }
+      } else if (editFunc) {
+        await axios.put(`${API}/periodos/${id}/funcionarios/${editFunc.id}`, {
+          nome: funcForm.nome,
+          tipo: funcForm.tipo,
+        });
       } else {
-        await axios.post(`${API}/periodos/${id}/funcionarios`, funcForm);
+        await axios.post(`${API}/periodos/${id}/funcionarios`, {
+          posto_id: funcForm.posto_id,
+          nome: funcForm.nome,
+          tipo: funcForm.tipo,
+        });
       }
-      setShowFuncModal(false); load();
-    } catch (e) { setFuncError(e.response?.data?.error || 'Erro ao salvar'); }
-    finally { setSavingFunc(false); }
+      setShowFuncModal(false);
+      load();
+    } catch (e) {
+      setFuncError(e.response?.data?.error || 'Erro ao salvar');
+    } finally {
+      setSavingFunc(false);
+    }
   };
 
   const doDeleteFunc = async () => {
@@ -114,21 +204,58 @@ export default function PeriodoDetailPage() {
     setDeleteFunc(null); load();
   };
 
-  const tipoColor = t => t === 'gerente' ? 'badge-blue' : 'badge-amber';
+  // ── Tornar produto especial
+  const tornarEspecial = (venda) => {
+    const posto = postos.find(p => p.codigo === venda.posto_codigo);
+    if (!posto) return;
+    setProdVenda({ ...venda, posto });
+    setProdForm({ comissao_frentista: '', comissao_trocador: '', comissao_gerente: '' });
+    setProdError('');
+    setShowProdModal(true);
+  };
 
-  // dias corridos
+  const salvarProdEspecial = async () => {
+    setSavingProd(true); setProdError('');
+    try {
+      await axios.post(`${API}/postos/${prodVenda.posto.id}/produtos-especiais`, {
+        nome_produto: prodVenda.produto,
+        comissao_frentista: prodForm.comissao_frentista || 0,
+        comissao_trocador: prodForm.comissao_trocador || 0,
+        comissao_gerente: prodForm.comissao_gerente || 0,
+      });
+      setShowProdModal(false);
+      loadProdutosEspeciais();
+    } catch (e) { setProdError(e.response?.data?.error || 'Erro ao salvar produto'); }
+    finally { setSavingProd(false); }
+  };
+
+  const isProdEspecial = (venda) => {
+    const posto = postos.find(p => p.codigo === venda.posto_codigo);
+    if (!posto) return false;
+    return produtosEspeciais.some(
+      pe => pe.posto_id === posto.id &&
+            pe.nome_produto.trim().toLowerCase() === venda.produto.trim().toLowerCase() &&
+            pe.ativo
+    );
+  };
+
+  const tipoColor = t => t === 'gerente' ? 'badge-blue' : t === 'trocador' ? 'badge-amber' : 'badge-gray';
+
   const diasInfo = (() => {
-    if (!periodo) return null;
-    if (periodo.status === 'fechado') return null;
+    if (!periodo || periodo.status === 'fechado') return null;
     const ini = new Date(periodo.data_inicio);
     const fim = new Date(periodo.data_fim);
     const hoje = new Date();
     const total = Math.round((fim - ini) / 86400000) + 1;
     const ref = hoje < fim ? hoje : fim;
     const corridos = Math.max(1, Math.round((ref - ini) / 86400000) + 1);
-    const fator = corridos / total;
-    return { total, corridos, fator };
+    return { total, corridos, fator: corridos / total };
   })();
+
+  // Desqualificados filtrados
+  const funcDesqFiltrados = filterDesqPosto
+    ? todosFuncionarios.filter(f => f.posto_codigo === filterDesqPosto)
+    : todosFuncionarios;
 
   if (loading) return (
     <>
@@ -158,6 +285,11 @@ export default function PeriodoDetailPage() {
           </div>
         </div>
         <div className="flex gap-8">
+          {isAdmin && (
+            <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>
+              🗑 Excluir Período
+            </button>
+          )}
           {isAdmin && periodo?.status === 'ativo' && (
             <button className="btn btn-ghost btn-sm" onClick={async () => {
               await axios.put(`${API}/periodos/${id}`, { status: 'fechado' });
@@ -174,12 +306,13 @@ export default function PeriodoDetailPage() {
 
       <div className="page">
         {/* Tabs */}
-        <div className="tabs mb-4" style={{ marginBottom: 16, display: 'inline-flex' }}>
+        <div className="tabs mb-4" style={{ marginBottom: 16, display: 'inline-flex', flexWrap: 'wrap' }}>
           {[
             ['metas', 'Metas'],
             ['funcionarios', 'Gerentes & Trocadores'],
             ['importar', 'Importar Vendas'],
             ['vendas', 'Vendas'],
+            ['desqualificados', 'Desqualificados'],
           ].map(([k, v]) => (
             <div key={k} className={`tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>{v}</div>
           ))}
@@ -204,25 +337,20 @@ export default function PeriodoDetailPage() {
                   setEditMeta(null);
                   setMetaForm({ posto_id: '', meta_frentista: '', meta_trocador: '', meta_posto: '' });
                   setShowMetaModal(true);
-                }}>
-                  + Definir Meta
-                </button>
+                }}>+ Definir Meta</button>
               )}
             </div>
             {!metas.length ? (
               <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>
                 Nenhuma meta definida.{' '}
-                {isAdmin && <span style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={() => setShowMetaModal(true)}>
-                  Definir agora →
-                </span>}
+                {isAdmin && <span style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={() => setShowMetaModal(true)}>Definir agora →</span>}
               </div>
             ) : (
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Posto</th>
-                      <th>Nome</th>
+                      <th>Posto</th><th>Nome</th>
                       <th className="text-right">Meta Frentista/un</th>
                       {diasInfo && <th className="text-right">Efetiva Frentista</th>}
                       <th className="text-right">Meta Trocador/un</th>
@@ -238,27 +366,16 @@ export default function PeriodoDetailPage() {
                         <td><span className="badge badge-gray mono">{m.codigo}</span></td>
                         <td>{m.posto_nome}</td>
                         <td className="text-right mono bold">{fmt(m.meta_frentista)}</td>
-                        {diasInfo && <td className="text-right mono" style={{ color: 'var(--amber)' }}>
-                          {fmt(m.meta_frentista * diasInfo.fator)}
-                        </td>}
+                        {diasInfo && <td className="text-right mono" style={{ color: 'var(--amber)' }}>{fmt(m.meta_frentista * diasInfo.fator)}</td>}
                         <td className="text-right mono bold">{fmt(m.meta_trocador)}</td>
-                        {diasInfo && <td className="text-right mono" style={{ color: 'var(--amber)' }}>
-                          {fmt(m.meta_trocador * diasInfo.fator)}
-                        </td>}
+                        {diasInfo && <td className="text-right mono" style={{ color: 'var(--amber)' }}>{fmt(m.meta_trocador * diasInfo.fator)}</td>}
                         <td className="text-right mono bold">{fmt(m.meta_posto)}</td>
-                        {diasInfo && <td className="text-right mono" style={{ color: 'var(--amber)' }}>
-                          {fmt(m.meta_posto * diasInfo.fator)}
-                        </td>}
+                        {diasInfo && <td className="text-right mono" style={{ color: 'var(--amber)' }}>{fmt(m.meta_posto * diasInfo.fator)}</td>}
                         {isAdmin && (
                           <td>
                             <button className="btn btn-ghost btn-sm" onClick={() => {
                               setEditMeta(m);
-                              setMetaForm({
-                                posto_id: m.posto_id,
-                                meta_frentista: m.meta_frentista,
-                                meta_trocador: m.meta_trocador,
-                                meta_posto: m.meta_posto,
-                              });
+                              setMetaForm({ posto_id: m.posto_id, meta_frentista: m.meta_frentista, meta_trocador: m.meta_trocador, meta_posto: m.meta_posto });
                               setShowMetaModal(true);
                             }}>Editar</button>
                           </td>
@@ -279,8 +396,8 @@ export default function PeriodoDetailPage() {
               <div>
                 <div className="card-title">Gerentes & Trocadores deste Período</div>
                 <div className="card-sub">
-                  Cadastre aqui os gerentes e trocadores desta apuração. O nome deve ser <strong>exatamente igual</strong> à coluna B da planilha.
-                  Gerentes cadastrados aqui recebem comissão mesmo que não apareçam nas vendas.
+                  O nome deve ser <strong>exatamente igual</strong> à coluna B da planilha.
+                  Use o tipo <strong>Ambos</strong> para quem acumula gerente + trocador.
                 </div>
               </div>
               {isAdmin && (
@@ -289,20 +406,17 @@ export default function PeriodoDetailPage() {
                   setFuncForm({ posto_id: '', nome: '', tipo: 'trocador' });
                   setFuncError('');
                   setShowFuncModal(true);
-                }}>
-                  + Adicionar
-                </button>
+                }}>+ Adicionar</button>
               )}
             </div>
             {!funcionarios.length ? (
               <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                Nenhum gerente ou trocador cadastrado neste período.
-                Os demais serão classificados como <strong>frentistas</strong> automaticamente.
+                Nenhum gerente ou trocador cadastrado. Os demais serão classificados como <strong>frentistas</strong>.
               </div>
             ) : (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Posto</th><th>Nome (exato como na planilha)</th><th>Tipo</th>{isAdmin && <th></th>}</tr></thead>
+                  <thead><tr><th>Posto</th><th>Nome</th><th>Tipo</th>{isAdmin && <th></th>}</tr></thead>
                   <tbody>
                     {funcionarios.map(f => (
                       <tr key={f.id}>
@@ -337,38 +451,18 @@ export default function PeriodoDetailPage() {
             <div className="card-header">
               <div>
                 <div className="card-title">Importar Vendas do Google Sheets</div>
-                <div className="card-sub">
-                  Colunas: A=Posto · B=Funcionário · C=Produto · D=Qtde · E=Vl.Unit · F=Vl.Bruto · G=Desconto · H=Acréscimo · I=Vl.Final
-                </div>
+                <div className="card-sub">Colunas: A=Posto · B=Funcionário · C=Produto · D=Qtde · E=Vl.Unit · F=Vl.Bruto · G=Desconto · H=Acréscimo · I=Vl.Final</div>
               </div>
             </div>
             <div className="card-body">
               <div className="form-group">
                 <label>URL da Planilha Google Sheets</label>
-                <input
-                  placeholder="https://docs.google.com/spreadsheets/d/…"
-                  value={importUrl}
-                  onChange={e => setImportUrl(e.target.value)}
-                />
-                <div className="form-hint">Compartilhar → "Qualquer pessoa com o link" pode ver → copie a URL</div>
+                <input placeholder="https://docs.google.com/spreadsheets/d/…" value={importUrl} onChange={e => setImportUrl(e.target.value)} />
+                <div className="form-hint">Compartilhar → "Qualquer pessoa com o link" → copie a URL</div>
               </div>
-
-              <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14, marginBottom: 16, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--text-dim)' }}>Como o tipo é detectado automaticamente:</div>
-                <ul style={{ paddingLeft: 16, color: 'var(--text-muted)', lineHeight: 2 }}>
-                  <li>O nome da coluna B é comparado com os <strong style={{ color: 'var(--text-dim)' }}>gerentes e trocadores cadastrados neste período</strong></li>
-                  <li>Se bater exatamente → tipo definido (gerente ou trocador)</li>
-                  <li>Se não bater → classificado como <strong style={{ color: 'var(--text-dim)' }}>frentista</strong></li>
-                  <li>Gerentes cadastrados aqui recebem comissão <strong style={{ color: 'var(--text-dim)' }}>mesmo que não apareçam nas vendas</strong></li>
-                </ul>
-              </div>
-
               {importResult && (
-                <div className={`alert ${importResult.ok ? 'alert-success' : 'alert-error'}`}>
-                  {importResult.msg}
-                </div>
+                <div className={`alert ${importResult.ok ? 'alert-success' : 'alert-error'}`}>{importResult.msg}</div>
               )}
-
               <button className="btn btn-primary" onClick={doImport} disabled={importing || !importUrl}>
                 {importing ? '⟳ Importando…' : '↓ Importar Vendas'}
               </button>
@@ -383,62 +477,185 @@ export default function PeriodoDetailPage() {
         {tab === 'vendas' && (
           <div className="card">
             <div className="card-header">
-              <div><div className="card-title">Vendas Importadas</div><div className="card-sub">{vendasTotal} registros</div></div>
-              <div className="filters">
+              <div>
+                <div className="card-title">Vendas Importadas</div>
+                <div className="card-sub">{vendasTotal} registros no total</div>
+              </div>
+              <div className="filters" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <select value={filterPosto} onChange={e => { setFilterPosto(e.target.value); setPage(1); }} style={{ maxWidth: 180 }}>
                   <option value="">Todos os postos</option>
                   {postos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.nome}</option>)}
                 </select>
+                <input
+                  placeholder="🔍 Funcionário ou produto…"
+                  value={filterFunc}
+                  onChange={e => { setFilterFunc(e.target.value); setPage(1); }}
+                  style={{ maxWidth: 220 }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Por página:</span>
+                  <select
+                    value={pageSize}
+                    onChange={e => { setPageSize(parseInt(e.target.value)); setPage(1); }}
+                    style={{ maxWidth: 90 }}
+                  >
+                    {[50, 100, 200, 500, 1000, 2000, 5000].map(n => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Posto</th><th>Funcionário</th><th>Tipo</th><th>Produto</th><th className="text-right">Qtde</th><th className="text-right">Vl. Final</th></tr>
+                  <tr>
+                    <th>Posto</th><th>Funcionário</th><th>Tipo</th><th>Produto</th>
+                    <th className="text-right">Qtde</th><th className="text-right">Vl. Final</th>
+                    {isAdmin && <th>Ação</th>}
+                  </tr>
                 </thead>
                 <tbody>
-                  {vendas.map((v, i) => (
-                    <tr key={i}>
-                      <td><span className="badge badge-gray mono">{v.posto_codigo}</span></td>
-                      <td style={{ fontSize: 12 }}>{v.funcionario}</td>
-                      <td><span className={`badge ${tipoColor(v.tipo_funcionario)}`}>{v.tipo_funcionario}</span></td>
-                      <td style={{ fontSize: 12, maxWidth: 260, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.produto}</td>
-                      <td className="text-right mono">{v.quantidade}</td>
-                      <td className="text-right mono bold">{fmt(v.valor_final)}</td>
-                    </tr>
-                  ))}
+                  {vendas.map((v, i) => {
+                    const especial = isProdEspecial(v);
+                    return (
+                      <tr key={i} style={especial ? { background: 'rgba(245,158,11,0.05)' } : {}}>
+                        <td><span className="badge badge-gray mono">{v.posto_codigo}</span></td>
+                        <td style={{ fontSize: 12 }}>{v.funcionario}</td>
+                        <td><span className={`badge ${tipoColor(v.tipo_funcionario)}`}>{v.tipo_funcionario}</span></td>
+                        <td style={{ fontSize: 12, maxWidth: 260, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {especial && <span style={{ color: 'var(--amber)', marginRight: 4 }}>★</span>}
+                          {v.produto}
+                          {especial && <span className="badge badge-amber" style={{ marginLeft: 6, fontSize: 10 }}>especial</span>}
+                        </td>
+                        <td className="text-right mono">{v.quantidade}</td>
+                        <td className="text-right mono bold">{fmt(v.valor_final)}</td>
+                        {isAdmin && (
+                          <td>
+                            {!especial ? (
+                              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
+                                onClick={() => tornarEspecial(v)}>
+                                ★ Tornar especial
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: 11, color: 'var(--amber)' }}>★ Especial</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                   {!vendas.length && (
-                    <tr><td colSpan={6} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
-                      Nenhuma venda. Importe uma planilha primeiro.
+                    <tr><td colSpan={isAdmin ? 7 : 6} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
+                      Nenhuma venda encontrada.
                     </td></tr>
                   )}
                 </tbody>
               </table>
             </div>
-            {vendasTotal > 50 && (
+            {vendasTotal > pageSize && (
               <div className="pagination">
-                <div className="pag-info">Mostrando {(page-1)*50+1}–{Math.min(page*50, vendasTotal)} de {vendasTotal}</div>
+                <div className="pag-info">
+                  Mostrando {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, vendasTotal)} de {vendasTotal}
+                </div>
                 <div className="pag-btns">
-                  <button className="pag-btn" disabled={page===1} onClick={() => setPage(p => p-1)}>‹</button>
-                  <button className="pag-btn" disabled={page*50 >= vendasTotal} onClick={() => setPage(p => p+1)}>›</button>
+                  <button className="pag-btn" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</button>
+                  {Array.from({ length: Math.min(5, Math.ceil(vendasTotal / pageSize)) }, (_, i) => {
+                    const pg = i + 1;
+                    return (
+                      <button key={pg} className={`pag-btn ${page === pg ? 'on' : ''}`} onClick={() => setPage(pg)}>{pg}</button>
+                    );
+                  })}
+                  {Math.ceil(vendasTotal / pageSize) > 5 && <span style={{ color: 'var(--text-muted)', padding: '0 4px' }}>…</span>}
+                  <button className="pag-btn" disabled={page * pageSize >= vendasTotal} onClick={() => setPage(p => p + 1)}>›</button>
                 </div>
               </div>
             )}
           </div>
         )}
+
+        {/* ─── DESQUALIFICADOS ─── */}
+        {tab === 'desqualificados' && (
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <div className="card-title">Desqualificados</div>
+                <div className="card-sub">
+                  Lista todos os funcionários do período (frentistas, trocadores e gerentes). Desqualificados são excluídos do cálculo de comissões.
+                </div>
+              </div>
+              <select value={filterDesqPosto} onChange={e => setFilterDesqPosto(e.target.value)} style={{ maxWidth: 200 }}>
+                <option value="">Todos os postos</option>
+                {postos.map(p => <option key={p.id} value={p.codigo}>{p.codigo} — {p.nome}</option>)}
+              </select>
+            </div>
+
+            {loadingDesq ? <Spinner text="Carregando funcionários…" /> : (
+              <>
+                {funcDesqFiltrados.length === 0 ? (
+                  <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Nenhum funcionário encontrado. Importe vendas ou cadastre funcionários primeiro.
+                  </div>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Posto</th><th>Funcionário</th><th>Tipo</th><th>Status</th><th>Motivo</th>
+                          {isAdmin && <th>Ação</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {funcDesqFiltrados.map((f, i) => {
+                          const key = `${f.posto_codigo}|${f.nome}|${f.tipo}`;
+                          const desq = desqualificados[key];
+                          return (
+                            <tr key={i} style={desq ? { background: 'rgba(239,68,68,0.05)' } : {}}>
+                              <td><span className="badge badge-gray mono">{f.posto_codigo}</span></td>
+                              <td style={{ fontWeight: 500 }}>{f.nome}</td>
+                              <td><span className={`badge ${tipoColor(f.tipo)}`}>{f.tipo}</span></td>
+                              <td>
+                                {desq
+                                  ? <span className="badge badge-red">Desqualificado</span>
+                                  : <span className="badge badge-green">Qualificado</span>}
+                              </td>
+                              <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 220 }}>
+                                {desq?.motivo || <span style={{ color: 'var(--border-light)' }}>—</span>}
+                              </td>
+                              {isAdmin && (
+                                <td>
+                                  {desq ? (
+                                    <button className="btn btn-ghost btn-sm" onClick={() => {
+                                      const next = { ...desqualificados };
+                                      delete next[key];
+                                      saveDesq(next);
+                                    }}>Requalificar</button>
+                                  ) : (
+                                    <button className="btn btn-danger btn-sm" onClick={() => {
+                                      setMotivoModal({ key, nome: f.nome });
+                                      setMotivoTexto('');
+                                    }}>Desqualificar</button>
+                                  )}
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Modal meta */}
+      {/* ── Modais ── */}
+
       {showMetaModal && (
         <Modal title={editMeta ? 'Editar Meta' : 'Definir Meta do Posto'} onClose={() => setShowMetaModal(false)}>
           <div className="modal-body">
-            <div className="alert alert-info" style={{ marginBottom: 14, fontSize: 12 }}>
-              <strong>Meta Frentista/Trocador</strong> = valor que <em>cada colaborador individualmente</em> precisa atingir.<br />
-              <strong>Meta do Posto</strong> = base para comissão do gerente (total do posto).
-              {diasInfo && <span style={{ color: 'var(--amber)', display: 'block', marginTop: 4 }}>
-                ⚡ Pro rata ativo: {diasInfo.corridos}/{diasInfo.total} dias = {(diasInfo.fator*100).toFixed(1)}% da meta.
-              </span>}
-            </div>
             <div className="form-group">
               <label>Posto</label>
               <select value={metaForm.posto_id} onChange={e => setMetaForm({ ...metaForm, posto_id: e.target.value })} disabled={!!editMeta}>
@@ -448,22 +665,19 @@ export default function PeriodoDetailPage() {
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>Meta Frentista (R$ / por colaborador)</label>
-                <input type="number" min="0" step="0.01" placeholder="0,00"
-                  value={metaForm.meta_frentista}
+                <label>Meta Frentista (R$/colaborador)</label>
+                <input type="number" min="0" step="0.01" placeholder="0,00" value={metaForm.meta_frentista}
                   onChange={e => setMetaForm({ ...metaForm, meta_frentista: e.target.value })} />
               </div>
               <div className="form-group">
-                <label>Meta Trocador (R$ / por colaborador)</label>
-                <input type="number" min="0" step="0.01" placeholder="0,00"
-                  value={metaForm.meta_trocador}
+                <label>Meta Trocador (R$/colaborador)</label>
+                <input type="number" min="0" step="0.01" placeholder="0,00" value={metaForm.meta_trocador}
                   onChange={e => setMetaForm({ ...metaForm, meta_trocador: e.target.value })} />
               </div>
             </div>
             <div className="form-group">
-              <label>Meta do Posto — base do gerente (R$ total do posto)</label>
-              <input type="number" min="0" step="0.01" placeholder="0,00"
-                value={metaForm.meta_posto}
+              <label>Meta do Posto — base do gerente (R$ total)</label>
+              <input type="number" min="0" step="0.01" placeholder="0,00" value={metaForm.meta_posto}
                 onChange={e => setMetaForm({ ...metaForm, meta_posto: e.target.value })} />
             </div>
           </div>
@@ -476,14 +690,13 @@ export default function PeriodoDetailPage() {
         </Modal>
       )}
 
-      {/* Modal funcionário */}
       {showFuncModal && (
         <Modal title={editFunc ? 'Editar Gerente/Trocador' : 'Adicionar Gerente ou Trocador'} onClose={() => setShowFuncModal(false)}>
           <div className="modal-body">
             {funcError && <div className="alert alert-error">{funcError}</div>}
             <div className="alert alert-info" style={{ marginBottom: 14, fontSize: 12 }}>
               O nome deve ser <strong>exatamente igual</strong> ao da coluna B da planilha.<br />
-              Ex: <code style={{ fontFamily: 'var(--mono)', background: 'var(--surface2)', padding: '1px 6px', borderRadius: 4 }}>000006 - CARLOS ROBERTO ALVES</code>
+              Use <strong>Ambos</strong> para quem é gerente e também aparece como trocador nas vendas.
             </div>
             <div className="form-group">
               <label>Posto</label>
@@ -494,8 +707,7 @@ export default function PeriodoDetailPage() {
             </div>
             <div className="form-group">
               <label>Nome (exato como na planilha)</label>
-              <input placeholder="Ex: 000006 - CARLOS ROBERTO ALVES"
-                value={funcForm.nome}
+              <input placeholder="Ex: 000006 - CARLOS ROBERTO ALVES" value={funcForm.nome}
                 onChange={e => setFuncForm({ ...funcForm, nome: e.target.value })} />
             </div>
             <div className="form-group">
@@ -503,7 +715,13 @@ export default function PeriodoDetailPage() {
               <select value={funcForm.tipo} onChange={e => setFuncForm({ ...funcForm, tipo: e.target.value })}>
                 <option value="gerente">Gerente</option>
                 <option value="trocador">Trocador de Óleo</option>
+                <option value="ambos">Ambos (Gerente + Trocador)</option>
               </select>
+              {funcForm.tipo === 'ambos' && (
+                <div className="form-hint" style={{ color: 'var(--amber)' }}>
+                  ⚡ Comissão gerencial (3% posto se meta) + comissão de trocador (faixa individual)
+                </div>
+              )}
             </div>
           </div>
           <div className="modal-foot">
@@ -522,6 +740,81 @@ export default function PeriodoDetailPage() {
           onConfirm={doDeleteFunc}
           onClose={() => setDeleteFunc(null)}
         />
+      )}
+
+      {confirmDelete && (
+        <ConfirmModal
+          title="Excluir Período"
+          message={`Tem certeza que deseja excluir "${periodo?.nome}"? Todos os dados (vendas, metas, funcionários) serão removidos permanentemente.`}
+          onConfirm={doDelete}
+          onClose={() => setConfirmDelete(false)}
+        />
+      )}
+
+      {/* Modal motivo desqualificação */}
+      {motivoModal && (
+        <Modal title={`Desqualificar: ${motivoModal.nome}`} onClose={() => setMotivoModal(null)}>
+          <div className="modal-body">
+            <div className="form-group">
+              <label>Motivo da desqualificação</label>
+              <textarea
+                rows={3}
+                placeholder="Ex: Afastamento por licença, desligamento…"
+                value={motivoTexto}
+                onChange={e => setMotivoTexto(e.target.value)}
+                style={{ resize: 'vertical' }}
+              />
+              <div className="form-hint">Opcional — ficará registrado para consulta.</div>
+            </div>
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-ghost" onClick={() => setMotivoModal(null)}>Cancelar</button>
+            <button className="btn btn-danger" onClick={() => {
+              saveDesq({ ...desqualificados, [motivoModal.key]: { motivo: motivoTexto, nome: motivoModal.nome } });
+              setMotivoModal(null);
+            }}>Confirmar Desqualificação</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal tornar produto especial */}
+      {showProdModal && prodVenda && (
+        <Modal title="Tornar Produto Especial" onClose={() => setShowProdModal(false)}>
+          <div className="modal-body">
+            {prodError && <div className="alert alert-error">{prodError}</div>}
+            <div style={{ padding: '10px 14px', background: 'var(--surface2)', borderRadius: 'var(--radius)', marginBottom: 16, fontSize: 12 }}>
+              <div style={{ fontWeight: 600, color: 'var(--text-dim)', marginBottom: 4 }}>Produto</div>
+              <div style={{ color: 'var(--amber)', wordBreak: 'break-word' }}>{prodVenda.produto}</div>
+              <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>Posto: <strong>{prodVenda.posto?.codigo} — {prodVenda.posto?.nome}</strong></div>
+            </div>
+            <div className="alert alert-info" style={{ fontSize: 12, marginBottom: 14 }}>
+              Valor de comissão por unidade vendida para cada tipo. Use <strong>0</strong> para não pagar comissão especial àquele tipo.
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Comissão Frentista (R$/un)</label>
+                <input type="number" min="0" step="0.01" placeholder="0,00" value={prodForm.comissao_frentista}
+                  onChange={e => setProdForm({ ...prodForm, comissao_frentista: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Comissão Trocador (R$/un)</label>
+                <input type="number" min="0" step="0.01" placeholder="0,00" value={prodForm.comissao_trocador}
+                  onChange={e => setProdForm({ ...prodForm, comissao_trocador: e.target.value })} />
+              </div>
+            </div>
+            <div className="form-group" style={{ maxWidth: '50%' }}>
+              <label>Comissão Gerente (R$/un)</label>
+              <input type="number" min="0" step="0.01" placeholder="0,00" value={prodForm.comissao_gerente}
+                onChange={e => setProdForm({ ...prodForm, comissao_gerente: e.target.value })} />
+            </div>
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-ghost" onClick={() => setShowProdModal(false)}>Cancelar</button>
+            <button className="btn btn-primary" disabled={savingProd} onClick={salvarProdEspecial}>
+              {savingProd ? 'Salvando…' : '★ Salvar como Especial'}
+            </button>
+          </div>
+        </Modal>
       )}
     </>
   );
