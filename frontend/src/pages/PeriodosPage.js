@@ -3,22 +3,33 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { API } from '../contexts/AuthContext';
 import { useAuth } from '../contexts/AuthContext';
-import { Modal, Spinner, Empty } from '../components/ui';
+import { Modal, Spinner } from '../components/ui';
 
 export default function PeriodosPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [periodos, setPeriodos] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Create modal
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ nome: '', data_inicio: '', data_fim: '', sheets_url: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const load = () => { setLoading(true); axios.get(`${API}/periodos`).then(r => setPeriodos(r.data)).finally(() => setLoading(false)); };
+  // Edit modal
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editPeriodo, setEditPeriodo] = useState(null);
+  const [editForm, setEditForm] = useState({ nome: '', data_inicio: '', data_fim: '', sheets_url: '', status: '' });
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState('');
+
+  const load = () => {
+    setLoading(true);
+    axios.get(`${API}/periodos`).then(r => setPeriodos(r.data)).finally(() => setLoading(false));
+  };
   useEffect(() => { load(); }, []);
 
-  // Suggest next period dates (26 prev → 25 curr)
   const suggestDates = () => {
     const now = new Date();
     const y = now.getFullYear(), m = now.getMonth();
@@ -33,9 +44,35 @@ export default function PeriodosPage() {
     setSaving(true); setError('');
     try {
       await axios.post(`${API}/periodos`, form);
-      setShowModal(false); setForm({ nome: '', data_inicio: '', data_fim: '', sheets_url: '' }); load();
+      setShowModal(false);
+      setForm({ nome: '', data_inicio: '', data_fim: '', sheets_url: '' });
+      load();
     } catch (e) { setError(e.response?.data?.error || 'Erro ao salvar'); }
     finally { setSaving(false); }
+  };
+
+  const openEdit = (p, e) => {
+    e.stopPropagation();
+    setEditPeriodo(p);
+    setEditForm({
+      nome: p.nome,
+      data_inicio: p.data_inicio?.split('T')[0] || '',
+      data_fim: p.data_fim?.split('T')[0] || '',
+      sheets_url: p.sheets_url || '',
+      status: p.status,
+    });
+    setEditError('');
+    setShowEditModal(true);
+  };
+
+  const saveEdit = async () => {
+    setSavingEdit(true); setEditError('');
+    try {
+      await axios.put(`${API}/periodos/${editPeriodo.id}`, editForm);
+      setShowEditModal(false);
+      load();
+    } catch (e) { setEditError(e.response?.data?.error || 'Erro ao salvar'); }
+    finally { setSavingEdit(false); }
   };
 
   const statusColor = s => s === 'ativo' ? 'badge-green' : 'badge-gray';
@@ -47,7 +84,9 @@ export default function PeriodosPage() {
           <div className="topbar-title">Períodos de Apuração</div>
           <div className="topbar-sub">Ciclo: dia 26 ao dia 25 do mês seguinte</div>
         </div>
-        {user?.role === 'admin' && <button className="btn btn-primary" onClick={() => { setShowModal(true); suggestDates(); }}>+ Novo Período</button>}
+        {user?.role === 'admin' && (
+          <button className="btn btn-primary" onClick={() => { setShowModal(true); suggestDates(); }}>+ Novo Período</button>
+        )}
       </div>
 
       <div className="page">
@@ -56,13 +95,24 @@ export default function PeriodosPage() {
             <div style={{ fontSize: 32, marginBottom: 12 }}>📅</div>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>Nenhum período ainda</div>
             <div style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 20 }}>Crie o primeiro período de apuração</div>
-            {user?.role === 'admin' && <button className="btn btn-primary" onClick={() => { setShowModal(true); suggestDates(); }}>Criar Primeiro Período</button>}
+            {user?.role === 'admin' && (
+              <button className="btn btn-primary" onClick={() => { setShowModal(true); suggestDates(); }}>Criar Primeiro Período</button>
+            )}
           </div>
         ) : (
           <div className="card">
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Período</th><th>Data Início</th><th>Data Fim</th><th>Planilha</th><th>Status</th><th></th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Período</th>
+                    <th>Data Início</th>
+                    <th>Data Fim</th>
+                    <th>Planilha</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
                 <tbody>
                   {periodos.map(p => (
                     <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/periodos/${p.id}`)}>
@@ -74,9 +124,18 @@ export default function PeriodosPage() {
                           ? <span className="badge badge-green">✓ Vinculada</span>
                           : <span className="badge badge-gray">Sem planilha</span>}
                       </td>
-                      <td><span className={`badge ${statusColor(p.status)}`}>{p.status === 'ativo' ? 'Ativo' : 'Fechado'}</span></td>
+                      <td>
+                        <span className={`badge ${statusColor(p.status)}`}>
+                          {p.status === 'ativo' ? 'Aberto' : 'Fechado'}
+                        </span>
+                      </td>
                       <td onClick={e => e.stopPropagation()}>
-                        <button className="btn btn-ghost btn-sm" onClick={() => navigate(`/periodos/${p.id}`)}>Abrir →</button>
+                        <div className="flex gap-8">
+                          <button className="btn btn-ghost btn-sm" onClick={() => navigate(`/periodos/${p.id}`)}>Abrir →</button>
+                          {user?.role === 'admin' && (
+                            <button className="btn btn-ghost btn-sm" onClick={e => openEdit(p, e)}>✏ Editar</button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -87,6 +146,7 @@ export default function PeriodosPage() {
         )}
       </div>
 
+      {/* Modal criar */}
       {showModal && (
         <Modal title="Novo Período de Apuração" onClose={() => setShowModal(false)}>
           <div className="modal-body">
@@ -115,6 +175,51 @@ export default function PeriodosPage() {
             <button className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancelar</button>
             <button className="btn btn-primary" onClick={save} disabled={saving || !form.nome || !form.data_inicio || !form.data_fim}>
               {saving ? 'Salvando…' : 'Criar Período'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal editar */}
+      {showEditModal && editPeriodo && (
+        <Modal title={`Editar — ${editPeriodo.nome}`} onClose={() => setShowEditModal(false)}>
+          <div className="modal-body">
+            {editError && <div className="alert alert-error">{editError}</div>}
+            <div className="form-group">
+              <label>Nome do Período</label>
+              <input value={editForm.nome} onChange={e => setEditForm({ ...editForm, nome: e.target.value })} />
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Data Início</label>
+                <input type="date" value={editForm.data_inicio} onChange={e => setEditForm({ ...editForm, data_inicio: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Data Fim</label>
+                <input type="date" value={editForm.data_fim} onChange={e => setEditForm({ ...editForm, data_fim: e.target.value })} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label>URL da Planilha Google Sheets</label>
+              <input placeholder="https://docs.google.com/spreadsheets/d/..." value={editForm.sheets_url} onChange={e => setEditForm({ ...editForm, sheets_url: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Status</label>
+              <select value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })}>
+                <option value="ativo">Aberto</option>
+                <option value="fechado">Fechado</option>
+              </select>
+              <div className="form-hint">
+                {editForm.status === 'ativo'
+                  ? '⚡ Período aberto — pro rata ativo, metas calculadas pelo dias corridos.'
+                  : '🔒 Período fechado — metas usadas integralmente (100%).'}
+              </div>
+            </div>
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-ghost" onClick={() => setShowEditModal(false)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={saveEdit} disabled={savingEdit || !editForm.nome || !editForm.data_inicio || !editForm.data_fim}>
+              {savingEdit ? 'Salvando…' : 'Salvar Alterações'}
             </button>
           </div>
         </Modal>

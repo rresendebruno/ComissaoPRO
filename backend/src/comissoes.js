@@ -1,5 +1,5 @@
 /**
- * MOTOR DE CÁLCULO DE COMISSÕES v2
+ * MOTOR DE CÁLCULO DE COMISSÕES v2.1
  *
  * FRENTISTAS — avaliados individualmente:
  *   < 50%          → 0%
@@ -16,9 +16,13 @@
  *   ≥ 150%         → 15%
  *
  * GERENTE — avaliado pelo total do posto vs meta_posto (com pro rata):
- *   Posto não atingiu meta_posto_prorata → 0%
+ *   Posto não atingiu meta_posto_prorata → 0% gerencial
  *   Posto atingiu  meta_posto_prorata    → 3% do total vendido do posto
- *   Gerente pode não aparecer nas vendas — é sempre incluído via cadastro do período
+ *
+ *   ACUMULAÇÃO: se o gerente também vendeu como trocador (tipo_acumulado = 'trocador'),
+ *   ele recebe AMBAS as comissões:
+ *     - comissão de trocador sobre suas próprias vendas (usando meta_trocador)
+ *     - comissão de gerente (3% do total do posto, se meta atingida)
  *
  * PRO RATA:
  *   Se período ABERTO: meta efetiva = meta * (dias_corridos / dias_totais)
@@ -43,7 +47,6 @@ function getFaixaTrocador(pct) {
 
 /**
  * Calcula o fator pro rata de um período
- * @returns { fator: Number, diasCorridos: Number, diasTotais: Number, proRata: Boolean }
  */
 function calcularProRata(periodo) {
   if (periodo.status === 'fechado') {
@@ -54,13 +57,9 @@ function calcularProRata(periodo) {
   const fim    = new Date(periodo.data_fim);
   const hoje   = new Date();
 
-  // dias totais do período (inclusive)
   const diasTotais = Math.round((fim - inicio) / 86400000) + 1;
-
-  // dias corridos até hoje (ou até fim se já passou)
   const referencia = hoje < fim ? hoje : fim;
   const diasCorridos = Math.max(1, Math.round((referencia - inicio) / 86400000) + 1);
-
   const fator = diasCorridos / diasTotais;
 
   return { fator, diasCorridos, diasTotais, proRata: true };
@@ -69,34 +68,33 @@ function calcularProRata(periodo) {
 /**
  * Calcula comissões completas de um período
  *
- * @param {Array}  vendas             - vendas do período
- * @param {Array}  metas              - [{posto_id, meta_frentista, meta_trocador, meta_posto}]
- * @param {Array}  produtosEspeciais  - [{posto_id, nome_produto, comissao_frentista, ...}]
- * @param {Array}  periodoFuncionarios- [{posto_id, nome, tipo}] gerentes/trocadores cadastrados no período
- * @param {Object} periodo            - {status, data_inicio, data_fim}
+ * @param {Array}  vendas              - vendas do período
+ * @param {Array}  metas               - [{posto_id, meta_frentista, meta_trocador, meta_posto}]
+ * @param {Array}  produtosEspeciais   - [{posto_id, nome_produto, comissao_frentista, ...}]
+ * @param {Array}  periodoFuncionarios - [{posto_id, nome, tipo}] gerentes/trocadores cadastrados
+ * @param {Object} periodo             - {status, data_inicio, data_fim}
  */
 function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios, periodo) {
   const proRata = calcularProRata(periodo);
 
-  // índice de produtos especiais
+  // Índice de produtos especiais
   const especiaisIdx = {};
   for (const pe of produtosEspeciais) {
     especiaisIdx[`${pe.posto_id}|${pe.nome_produto.trim().toLowerCase()}`] = pe;
   }
 
-  // índice de metas
+  // Índice de metas
   const metasIdx = {};
   for (const m of metas) metasIdx[m.posto_id] = m;
 
-  // índice de gerentes/trocadores cadastrados no período por posto
-  // { posto_id: { "nome": "gerente"|"trocador" } }
+  // Índice de tipo cadastrado no período: "posto_id|nome_lower" → tipo
   const funcIdx = {};
   for (const f of periodoFuncionarios) {
     if (!funcIdx[f.posto_id]) funcIdx[f.posto_id] = {};
     funcIdx[f.posto_id][f.nome.trim().toLowerCase()] = f.tipo;
   }
 
-  // estrutura base: acumular vendas por posto → funcionário
+  // Estrutura base por posto → funcionário
   const porPosto = {};
 
   const ensurePosto = (postoId) => {
@@ -114,7 +112,7 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     if (!grupo[nome]) grupo[nome] = { totalVendas: 0, itensEspeciais: [], vendas: [] };
   };
 
-  // pré-popular gerentes cadastrados no período (mesmo sem vendas)
+  // Pré-popular gerentes cadastrados (mesmo sem vendas)
   for (const f of periodoFuncionarios) {
     if (f.tipo === 'gerente') {
       ensurePosto(f.posto_id);
@@ -122,22 +120,21 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     }
   }
 
-  // acumular vendas
+  // Acumular vendas
   for (const v of vendas) {
     ensurePosto(v.posto_id);
     const posto = porPosto[v.posto_id];
     posto.totalPosto += Number(v.valor_final);
 
-    // tipo vem da tabela (já resolvido na importação)
     const tipo  = v.tipo_funcionario;
-    const grupo = tipo === 'gerente' ? posto.gerentes
+    const grupo = tipo === 'gerente'  ? posto.gerentes
                 : tipo === 'trocador' ? posto.trocadores
                 : posto.frentistas;
 
     ensureFunc(grupo, v.funcionario);
     grupo[v.funcionario].totalVendas += Number(v.valor_final);
 
-    // itens especiais
+    // Itens especiais
     const peKey = `${v.posto_id}|${v.produto.trim().toLowerCase()}`;
     if (especiaisIdx[peKey]) {
       const pe = especiaisIdx[peKey];
@@ -154,13 +151,12 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     }
   }
 
-  // calcular resultado por posto
+  // Calcular resultado por posto
   const resultado = {};
 
   for (const [postoId, dados] of Object.entries(porPosto)) {
     const meta = metasIdx[postoId] || { meta_frentista: 0, meta_trocador: 0, meta_posto: 0 };
 
-    // metas efetivas com pro rata
     const metaFrentistaEfetiva = Number(meta.meta_frentista) * proRata.fator;
     const metaTrocadorEfetiva  = Number(meta.meta_trocador)  * proRata.fator;
     const metaPostoEfetiva     = Number(meta.meta_posto)     * proRata.fator;
@@ -169,15 +165,12 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       funcionarios: [],
       totalComissoes: 0,
       totalVendasPosto: dados.totalPosto,
-      // metas originais
       metaFrentista: Number(meta.meta_frentista),
       metaTrocador:  Number(meta.meta_trocador),
       metaPosto:     Number(meta.meta_posto),
-      // metas efetivas (com pro rata se aberto)
       metaFrentistaEfetiva,
       metaTrocadorEfetiva,
       metaPostoEfetiva,
-      // info pro rata
       proRata: proRata.proRata,
       fatorProRata: proRata.fator,
       diasCorridos: proRata.diasCorridos,
@@ -186,11 +179,9 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
 
     const res = resultado[postoId];
 
-    // ── FRENTISTAS (avaliação individual) ──────────────────────────────
+    // ── FRENTISTAS ──────────────────────────────────────────────────────
     for (const [nome, f] of Object.entries(dados.frentistas)) {
-      const pctIndividual = metaFrentistaEfetiva > 0
-        ? f.totalVendas / metaFrentistaEfetiva
-        : 0;
+      const pctIndividual = metaFrentistaEfetiva > 0 ? f.totalVendas / metaFrentistaEfetiva : 0;
       const taxa = getFaixaFrentista(pctIndividual);
       const comissaoAgregados = f.totalVendas * taxa;
       const comissaoEspeciais = f.itensEspeciais.reduce((s, i) => s + i.comissao_total, 0);
@@ -210,11 +201,9 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       res.totalComissoes += totalComissao;
     }
 
-    // ── TROCADORES (avaliação individual) ──────────────────────────────
+    // ── TROCADORES ──────────────────────────────────────────────────────
     for (const [nome, f] of Object.entries(dados.trocadores)) {
-      const pctIndividual = metaTrocadorEfetiva > 0
-        ? f.totalVendas / metaTrocadorEfetiva
-        : 0;
+      const pctIndividual = metaTrocadorEfetiva > 0 ? f.totalVendas / metaTrocadorEfetiva : 0;
       const taxa = getFaixaTrocador(pctIndividual);
       const comissaoAgregados = f.totalVendas * taxa;
       const comissaoEspeciais = f.itensEspeciais.reduce((s, i) => s + i.comissao_total, 0);
@@ -234,34 +223,84 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       res.totalComissoes += totalComissao;
     }
 
-    // ── GERENTE (avaliação pelo total do posto) ────────────────────────
-    // meta do posto com pro rata
-    const pctPosto = metaPostoEfetiva > 0
-      ? dados.totalPosto / metaPostoEfetiva
-      : 0;
+    // ── GERENTES ────────────────────────────────────────────────────────
+    // Meta do posto com pro rata
+    const pctPosto = metaPostoEfetiva > 0 ? dados.totalPosto / metaPostoEfetiva : 0;
     const gerenteAtingiuMeta = pctPosto >= 1.0;
 
     for (const [nome, f] of Object.entries(dados.gerentes)) {
-      // comissão base: 3% do total do posto SE meta atingida
-      const comissaoAgregados = gerenteAtingiuMeta ? dados.totalPosto * 0.03 : 0;
-      // itens especiais que ele mesmo vendeu (pode ser 0 se não aparece nas vendas)
-      const comissaoEspeciais = f.itensEspeciais.reduce((s, i) => s + i.comissao_total, 0);
-      const totalComissao     = comissaoAgregados + comissaoEspeciais;
+      // Comissão gerencial: 3% do total do posto se meta atingida
+      const comissaoGerencial    = gerenteAtingiuMeta ? dados.totalPosto * 0.03 : 0;
+
+      // ── ACUMULAÇÃO: verifica se este gerente também aparece como trocador nas vendas ──
+      // Buscamos suas vendas no grupo de trocadores (mesmo nome)
+      const vendaTrocador = dados.trocadores[nome] || null;
+      let comissaoTrocadorAcumulada  = 0;
+      let itensEspeciaisTrocador     = [];
+      let taxaTrocadorAcumulada      = 0;
+      let pctTrocadorAcumulado       = 0;
+      let vendasComoTrocador         = 0;
+
+      if (vendaTrocador) {
+        pctTrocadorAcumulado      = metaTrocadorEfetiva > 0 ? vendaTrocador.totalVendas / metaTrocadorEfetiva : 0;
+        taxaTrocadorAcumulada     = getFaixaTrocador(pctTrocadorAcumulado);
+        comissaoTrocadorAcumulada = vendaTrocador.totalVendas * taxaTrocadorAcumulada;
+        itensEspeciaisTrocador    = vendaTrocador.itensEspeciais;
+        vendasComoTrocador        = vendaTrocador.totalVendas;
+      }
+
+      // Especiais do gerente (nas vendas registradas como gerente)
+      const comissaoEspeciaisGerente  = f.itensEspeciais.reduce((s, i) => s + i.comissao_total, 0);
+      const comissaoEspeciaisTrocador = itensEspeciaisTrocador.reduce((s, i) => s + i.comissao_total, 0);
+
+      const totalComissaoGerencial = comissaoGerencial + comissaoEspeciaisGerente;
+      const totalComissaoTrocador  = comissaoTrocadorAcumulada + comissaoEspeciaisTrocador;
+      const totalComissao          = totalComissaoGerencial + totalComissaoTrocador;
 
       res.funcionarios.push({
         nome, tipo: 'gerente',
-        totalVendas: dados.totalPosto,   // base = total do posto
+        // Vendas do gerente (registradas como gerente)
+        totalVendas: dados.totalPosto,   // base gerencial = total do posto
+        vendasProprias: f.totalVendas,   // o que ele mesmo lançou como gerente
+        vendasComoTrocador,              // vendas lançadas como trocador
         metaEfetiva: metaPostoEfetiva,
         pctMeta: pctPosto,
         taxaComissao: gerenteAtingiuMeta ? 0.03 : 0,
-        comissaoAgregados,
+        comissaoAgregados: comissaoGerencial,
         itensEspeciais: f.itensEspeciais,
-        comissaoEspeciais,
+        comissaoEspeciais: comissaoEspeciaisGerente,
+        totalComissaoGerencial,
+        // Acumulação trocador
+        acumulaTrocador: !!vendaTrocador,
+        pctTrocadorAcumulado,
+        taxaTrocadorAcumulada,
+        comissaoTrocadorAcumulada,
+        itensEspeciaisTrocador,
+        comissaoEspeciaisTrocador,
+        totalComissaoTrocador,
+        // Total final
         totalComissao,
         metaAtingida: gerenteAtingiuMeta,
-        semVendas: f.totalVendas === 0,  // gerente que não apareceu nas vendas
+        semVendas: f.totalVendas === 0 && !vendaTrocador,
       });
       res.totalComissoes += totalComissao;
+    }
+
+    // Gerentes que acumularam como trocadores NÃO devem aparecer duas vezes
+    // Remove do grupo de trocadores os nomes que já são gerentes
+    // (já somados acima — sem double-count)
+    const nomesGerentes = new Set(Object.keys(dados.gerentes).map(n => n));
+    for (const nome of nomesGerentes) {
+      // Se aparecia como trocador, já foi computado dentro do gerente — desconta do total
+      // (o total foi adicionado dentro do loop de trocadores anteriormente — precisamos remover)
+      if (dados.trocadores[nome]) {
+        // Remover o funcionário já adicionado na lista como 'trocador' com o mesmo nome
+        const idx = res.funcionarios.findIndex(f => f.nome === nome && f.tipo === 'trocador');
+        if (idx !== -1) {
+          res.totalComissoes -= res.funcionarios[idx].totalComissao;
+          res.funcionarios.splice(idx, 1);
+        }
+      }
     }
 
     res.pctMetaPosto = pctPosto;

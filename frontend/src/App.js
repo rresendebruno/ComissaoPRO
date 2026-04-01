@@ -10,10 +10,15 @@ import ComissoesPage from './pages/ComissoesPage';
 import PostosPage from './pages/PostosPage';
 import PostoDetailPage from './pages/PostoDetailPage';
 import UsuariosPage from './pages/UsuariosPage';
+import ConfiguracoesPage from './pages/ConfiguracoesPage';
 
 function Guard({ children, admin }) {
   const { user, loading } = useAuth();
-  if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--text-muted)', fontSize: 13 }}>Carregando...</div>;
+  if (loading) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--text-muted)', fontSize: 13 }}>
+      Carregando...
+    </div>
+  );
   if (!user) return <Navigate to="/login" replace />;
   if (admin && user.role !== 'admin') return <Navigate to="/" replace />;
   return children;
@@ -33,6 +38,7 @@ export default function App() {
             <Route path="postos" element={<PostosPage />} />
             <Route path="postos/:id" element={<PostoDetailPage />} />
             <Route path="usuarios" element={<Guard admin><UsuariosPage /></Guard>} />
+            <Route path="configuracoes" element={<Guard admin><ConfiguracoesPage /></Guard>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

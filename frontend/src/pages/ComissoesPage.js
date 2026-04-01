@@ -43,24 +43,28 @@ export default function ComissoesPage() {
 
   const postoIds = comissoes ? Object.keys(comissoes) : [];
 
-  const totalGeral       = postoIds.reduce((s, pid) => s + (comissoes[pid]?.totalComissoes || 0), 0);
+  const totalGeral         = postoIds.reduce((s, pid) => s + (comissoes[pid]?.totalComissoes || 0), 0);
   const totalFrentComissao = postoIds.reduce((s, pid) =>
     s + comissoes[pid].funcionarios.filter(f => f.tipo === 'frentista').reduce((ss, f) => ss + f.totalComissao, 0), 0);
-  const totalTrocComissao = postoIds.reduce((s, pid) =>
+  const totalTrocComissao  = postoIds.reduce((s, pid) =>
     s + comissoes[pid].funcionarios.filter(f => f.tipo === 'trocador').reduce((ss, f) => ss + f.totalComissao, 0), 0);
-  const totalGerComissao = postoIds.reduce((s, pid) =>
+  const totalGerComissao   = postoIds.reduce((s, pid) =>
     s + comissoes[pid].funcionarios.filter(f => f.tipo === 'gerente').reduce((ss, f) => ss + f.totalComissao, 0), 0);
 
   const tipoLabel = { frentista: 'Frentista', trocador: 'Trocador', gerente: 'Gerente' };
   const tipoColor = { frentista: 'badge-gray', trocador: 'badge-amber', gerente: 'badge-blue' };
 
-  // Pro rata info from first posto result
   const proRataInfo = postoIds.length > 0 ? {
     ativo: comissoes[postoIds[0]]?.proRata,
     fator: comissoes[postoIds[0]]?.fatorProRata,
     corridos: comissoes[postoIds[0]]?.diasCorridos,
     totais: comissoes[postoIds[0]]?.diasTotais,
   } : null;
+
+  // Determina se algum gerente no período acumula trocador
+  const temGerenteAcumulador = postoIds.some(pid =>
+    comissoes[pid].funcionarios.some(f => f.tipo === 'gerente' && f.acumulaTrocador)
+  );
 
   return (
     <>
@@ -142,6 +146,10 @@ export default function ComissoesPage() {
             const isOpen = expandedPosto === pid;
             const posto = postos.find(p => p.id === parseInt(pid));
 
+            // Separar gerentes para tabela dedicada
+            const gerentes   = funcs.filter(f => f.tipo === 'gerente');
+            const naoGerentes = funcs.filter(f => f.tipo !== 'gerente');
+
             return (
               <div key={pid} className="card mb-4" style={{ marginBottom: 12 }}>
                 {/* Cabeçalho do posto */}
@@ -189,7 +197,7 @@ export default function ComissoesPage() {
                     {(tipoFiltro === 'todos' || tipoFiltro === 'frentista') && d.metaFrentistaEfetiva > 0 && (
                       <div>
                         <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>
-                          Frentistas — meta individual efetiva: <strong style={{ color: 'var(--text)' }}>{fmt(d.metaFrentistaEfetiva)}</strong>
+                          Frentistas — meta efetiva: <strong style={{ color: 'var(--text)' }}>{fmt(d.metaFrentistaEfetiva)}</strong>
                           {d.proRata && <span style={{ color: 'var(--amber)' }}> (de {fmt(d.metaFrentista)})</span>}
                         </span>
                         <FaixaInfo tipo="frentista" />
@@ -198,7 +206,7 @@ export default function ComissoesPage() {
                     {(tipoFiltro === 'todos' || tipoFiltro === 'trocador') && d.metaTrocadorEfetiva > 0 && (
                       <div>
                         <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>
-                          Trocadores — meta individual efetiva: <strong style={{ color: 'var(--text)' }}>{fmt(d.metaTrocadorEfetiva)}</strong>
+                          Trocadores — meta efetiva: <strong style={{ color: 'var(--text)' }}>{fmt(d.metaTrocadorEfetiva)}</strong>
                           {d.proRata && <span style={{ color: 'var(--amber)' }}> (de {fmt(d.metaTrocador)})</span>}
                         </span>
                         <FaixaInfo tipo="trocador" />
@@ -216,8 +224,8 @@ export default function ComissoesPage() {
                   </div>
                 )}
 
-                {/* Tabela de funcionários */}
-                {isOpen && (
+                {/* ── Tabela: Frentistas & Trocadores ── */}
+                {isOpen && naoGerentes.length > 0 && (
                   <div className="table-wrap">
                     <table>
                       <thead>
@@ -234,17 +242,12 @@ export default function ComissoesPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {funcs.sort((a, b) => b.totalComissao - a.totalComissao).map((f, i) => {
+                        {naoGerentes.sort((a, b) => b.totalComissao - a.totalComissao).map((f, i) => {
                           const fx = faixaLabel(f.pctMeta, f.tipo);
                           return (
                             <React.Fragment key={i}>
-                              <tr style={f.semVendas ? { opacity: 0.75 } : {}}>
-                                <td style={{ fontWeight: 500, fontSize: 13 }}>
-                                  {f.nome}
-                                  {f.semVendas && (
-                                    <span className="badge badge-gray" style={{ marginLeft: 6, fontSize: 10 }}>sem vendas</span>
-                                  )}
-                                </td>
+                              <tr>
+                                <td style={{ fontWeight: 500, fontSize: 13 }}>{f.nome}</td>
                                 <td><span className={`badge ${tipoColor[f.tipo]}`}>{tipoLabel[f.tipo]}</span></td>
                                 <td className="text-right mono">{fmt(f.totalVendas)}</td>
                                 <td className="text-right mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -264,17 +267,11 @@ export default function ComissoesPage() {
                               </tr>
                               {f.itensEspeciais?.map((ie, j) => (
                                 <tr key={`ie-${j}`} style={{ background: 'rgba(245,158,11,0.04)' }}>
-                                  <td colSpan={2} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--amber)' }}>
-                                    ★ {ie.produto}
-                                  </td>
+                                  <td colSpan={2} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--amber)' }}>★ {ie.produto}</td>
                                   <td className="text-right mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>×{ie.quantidade}</td>
                                   <td colSpan={4} />
-                                  <td className="text-right mono" style={{ fontSize: 11, color: 'var(--amber)' }}>
-                                    {fmt(ie.comissao_unit)}/un
-                                  </td>
-                                  <td className="text-right mono" style={{ fontSize: 11, color: 'var(--amber)' }}>
-                                    {fmt(ie.comissao_total)}
-                                  </td>
+                                  <td className="text-right mono" style={{ fontSize: 11, color: 'var(--amber)' }}>{fmt(ie.comissao_unit)}/un</td>
+                                  <td className="text-right mono" style={{ fontSize: 11, color: 'var(--amber)' }}>{fmt(ie.comissao_total)}</td>
                                 </tr>
                               ))}
                             </React.Fragment>
@@ -283,17 +280,168 @@ export default function ComissoesPage() {
                       </tbody>
                       <tfoot>
                         <tr>
-                          <td colSpan={6} style={{ paddingLeft: 16 }}>
-                            Total {posto?.codigo}
-                          </td>
-                          <td className="text-right mono">{fmt(funcs.reduce((s, f) => s + f.comissaoAgregados, 0))}</td>
-                          <td className="text-right mono">{fmt(funcs.reduce((s, f) => s + f.comissaoEspeciais, 0))}</td>
+                          <td colSpan={6} style={{ paddingLeft: 16 }}>Subtotal frentistas/trocadores</td>
+                          <td className="text-right mono">{fmt(naoGerentes.reduce((s, f) => s + f.comissaoAgregados, 0))}</td>
+                          <td className="text-right mono">{fmt(naoGerentes.reduce((s, f) => s + f.comissaoEspeciais, 0))}</td>
                           <td className="text-right mono" style={{ color: 'var(--green)' }}>
-                            {fmt(funcs.reduce((s, f) => s + f.totalComissao, 0))}
+                            {fmt(naoGerentes.reduce((s, f) => s + f.totalComissao, 0))}
                           </td>
                         </tr>
                       </tfoot>
                     </table>
+                  </div>
+                )}
+
+                {/* ── Tabela dedicada: Gerentes ── */}
+                {isOpen && gerentes.length > 0 && (
+                  <div className="table-wrap" style={{ borderTop: naoGerentes.length > 0 ? '2px solid var(--border-light)' : 'none' }}>
+                    <div style={{ padding: '8px 16px', background: 'rgba(79,110,247,0.05)', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                      Gerentes
+                    </div>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Gerente</th>
+                          <th className="text-right">Vendas Próprias</th>
+                          <th className="text-right">Total Posto</th>
+                          <th className="text-right">% Meta Posto</th>
+                          <th className="text-right">Com. Gerencial</th>
+                          <th className="text-right">Com. Esp. Gerente</th>
+                          {/* Colunas de acumulação como trocador */}
+                          <th className="text-right" style={{ color: 'var(--amber)' }}>Vendas Trocador</th>
+                          <th className="text-right" style={{ color: 'var(--amber)' }}>Com. Trocador</th>
+                          <th className="text-right" style={{ color: 'var(--amber)' }}>Com. Esp. Trocador</th>
+                          <th className="text-right" style={{ color: 'var(--green)' }}>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gerentes.map((f, i) => {
+                          const fxPosto = faixaLabel(f.pctMeta, 'gerente');
+                          return (
+                            <React.Fragment key={i}>
+                              <tr style={f.semVendas ? { opacity: 0.75 } : {}}>
+                                <td style={{ fontWeight: 500, fontSize: 13 }}>
+                                  {f.nome}
+                                  {f.semVendas && (
+                                    <span className="badge badge-gray" style={{ marginLeft: 6, fontSize: 10 }}>sem vendas</span>
+                                  )}
+                                  {f.acumulaTrocador && (
+                                    <span className="badge badge-amber" style={{ marginLeft: 6, fontSize: 10 }}>+ trocador</span>
+                                  )}
+                                </td>
+
+                                {/* Vendas próprias (registradas como gerente) */}
+                                <td className="text-right mono" style={{ fontSize: 12 }}>
+                                  {fmt(f.vendasProprias)}
+                                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>como gerente</div>
+                                </td>
+
+                                {/* Total do posto (base da comissão gerencial) */}
+                                <td className="text-right mono">
+                                  {fmt(f.totalVendas)}
+                                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>base gerencial</div>
+                                </td>
+
+                                {/* % meta posto */}
+                                <td className="text-right">
+                                  <span className={`badge ${fxPosto.color}`}>{(f.pctMeta * 100).toFixed(1)}%</span>
+                                  {!f.metaAtingida && (
+                                    <div style={{ fontSize: 10, color: 'var(--red)' }}>meta não atingida</div>
+                                  )}
+                                </td>
+
+                                {/* Comissão gerencial base */}
+                                <td className="text-right mono">{fmt(f.comissaoAgregados)}</td>
+
+                                {/* Com. especiais do gerente */}
+                                <td className="text-right mono">
+                                  {f.comissaoEspeciais > 0 ? fmt(f.comissaoEspeciais) : <span className="muted">—</span>}
+                                </td>
+
+                                {/* Acumulação como trocador */}
+                                <td className="text-right mono" style={{ color: f.acumulaTrocador ? 'var(--amber)' : 'var(--text-muted)' }}>
+                                  {f.acumulaTrocador ? fmt(f.vendasComoTrocador) : '—'}
+                                  {f.acumulaTrocador && (
+                                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                                      {(f.taxaTrocadorAcumulada * 100).toFixed(0)}% taxa
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="text-right mono" style={{ color: f.acumulaTrocador ? 'var(--amber)' : 'var(--text-muted)' }}>
+                                  {f.acumulaTrocador ? fmt(f.comissaoTrocadorAcumulada) : '—'}
+                                </td>
+                                <td className="text-right mono" style={{ color: f.acumulaTrocador ? 'var(--amber)' : 'var(--text-muted)' }}>
+                                  {f.acumulaTrocador && f.comissaoEspeciaisTrocador > 0 ? fmt(f.comissaoEspeciaisTrocador) : '—'}
+                                </td>
+
+                                {/* Total */}
+                                <td className="text-right mono bold" style={{ color: 'var(--green)' }}>
+                                  {fmt(f.totalComissao)}
+                                  {f.acumulaTrocador && (
+                                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                                      gerente + trocador
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+
+                              {/* Detalhe: itens especiais do gerente */}
+                              {f.itensEspeciais?.map((ie, j) => (
+                                <tr key={`ieg-${j}`} style={{ background: 'rgba(79,110,247,0.04)' }}>
+                                  <td colSpan={4} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--accent)' }}>
+                                    ★ {ie.produto} (gerente)
+                                  </td>
+                                  <td colSpan={1} />
+                                  <td className="text-right mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
+                                    ×{ie.quantidade} × {fmt(ie.comissao_unit)} = {fmt(ie.comissao_total)}
+                                  </td>
+                                  <td colSpan={4} />
+                                </tr>
+                              ))}
+
+                              {/* Detalhe: itens especiais como trocador */}
+                              {f.acumulaTrocador && f.itensEspeciaisTrocador?.map((ie, j) => (
+                                <tr key={`iet-${j}`} style={{ background: 'rgba(245,158,11,0.04)' }}>
+                                  <td colSpan={4} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--amber)' }}>
+                                    ★ {ie.produto} (trocador)
+                                  </td>
+                                  <td colSpan={4} />
+                                  <td className="text-right mono" style={{ fontSize: 11, color: 'var(--amber)' }}>
+                                    ×{ie.quantidade} × {fmt(ie.comissao_unit)} = {fmt(ie.comissao_total)}
+                                  </td>
+                                  <td />
+                                </tr>
+                              ))}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <td colSpan={4} style={{ paddingLeft: 16 }}>Subtotal gerentes</td>
+                          <td className="text-right mono">{fmt(gerentes.reduce((s, f) => s + f.comissaoAgregados, 0))}</td>
+                          <td className="text-right mono">{fmt(gerentes.reduce((s, f) => s + f.comissaoEspeciais, 0))}</td>
+                          <td />
+                          <td className="text-right mono" style={{ color: 'var(--amber)' }}>{fmt(gerentes.reduce((s, f) => s + (f.comissaoTrocadorAcumulada || 0), 0))}</td>
+                          <td className="text-right mono" style={{ color: 'var(--amber)' }}>{fmt(gerentes.reduce((s, f) => s + (f.comissaoEspeciaisTrocador || 0), 0))}</td>
+                          <td className="text-right mono" style={{ color: 'var(--green)' }}>
+                            {fmt(gerentes.reduce((s, f) => s + f.totalComissao, 0))}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+
+                {/* Total do posto */}
+                {isOpen && (
+                  <div style={{ padding: '10px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)' }}>
+                      Total {posto?.codigo}
+                    </span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--green)', fontFamily: 'var(--mono)' }}>
+                      {fmt(funcs.reduce((s, f) => s + f.totalComissao, 0))}
+                    </span>
                   </div>
                 )}
               </div>
