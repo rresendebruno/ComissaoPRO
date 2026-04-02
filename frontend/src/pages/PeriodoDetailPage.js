@@ -45,7 +45,7 @@ export default function PeriodoDetailPage() {
   const [editMeta, setEditMeta] = useState(null);
   const [savingMeta, setSavingMeta] = useState(false);
 
-  // Funcionário modal — suporta 'gerente' | 'trocador' | 'ambos'
+  // Funcionário modal
   const [showFuncModal, setShowFuncModal] = useState(false);
   const [funcForm, setFuncForm] = useState({ posto_id: '', nome: '', tipo: 'trocador' });
   const [editFunc, setEditFunc] = useState(null);
@@ -53,14 +53,12 @@ export default function PeriodoDetailPage() {
   const [deleteFunc, setDeleteFunc] = useState(null);
   const [funcError, setFuncError] = useState('');
 
-  // Desqualificados — carregados do endpoint /todos-funcionarios
+  // FIX 2: Desqualificados via API
   const [todosFuncionarios, setTodosFuncionarios] = useState([]);
+  const [desqualificados, setDesqualificados] = useState([]); // array of DB records
   const [loadingDesq, setLoadingDesq] = useState(false);
-  const [desqualificados, setDesqualificados] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(`desq_${id}`) || '{}'); } catch { return {}; }
-  });
   const [filterDesqPosto, setFilterDesqPosto] = useState('');
-  const [motivoModal, setMotivoModal] = useState(null); // { key, nome }
+  const [motivoModal, setMotivoModal] = useState(null);
   const [motivoTexto, setMotivoTexto] = useState('');
 
   // Excluir período
@@ -68,11 +66,6 @@ export default function PeriodoDetailPage() {
   const [deleting, setDeleting] = useState(false);
 
   const isAdmin = user?.role === 'admin';
-
-  const saveDesq = (next) => {
-    setDesqualificados(next);
-    localStorage.setItem(`desq_${id}`, JSON.stringify(next));
-  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -109,10 +102,15 @@ export default function PeriodoDetailPage() {
       });
   }, [postos]);
 
+  // FIX 2: load from API — tolerante a falha na tabela desqualificados
   const loadTodosFuncionarios = useCallback(() => {
     setLoadingDesq(true);
     axios.get(`${API}/periodos/${id}/todos-funcionarios`)
-      .then(r => setTodosFuncionarios(r.data))
+      .then(r1 => {
+        setTodosFuncionarios(r1.data);
+        return axios.get(`${API}/periodos/${id}/desqualificados`).catch(() => ({ data: [] }));
+      })
+      .then(r2 => setDesqualificados(r2.data))
       .finally(() => setLoadingDesq(false));
   }, [id]);
 
@@ -155,40 +153,20 @@ export default function PeriodoDetailPage() {
     finally { setSavingMeta(false); }
   };
 
-  // ── Funcionários — suporte a 'ambos'
-  // O backend agora suporta a unique constraint (periodo, posto, nome, tipo)
-  // então podemos inserir o mesmo nome com tipos diferentes sem conflito
+  // ── Funcionários
   const saveFunc = async () => {
     setSavingFunc(true); setFuncError('');
     try {
       if (funcForm.tipo === 'ambos') {
-        // Cria/atualiza como gerente
-        await axios.post(`${API}/periodos/${id}/funcionarios`, {
-          posto_id: funcForm.posto_id,
-          nome: funcForm.nome,
-          tipo: 'gerente',
-        });
-        // Cria/atualiza como trocador
-        await axios.post(`${API}/periodos/${id}/funcionarios`, {
-          posto_id: funcForm.posto_id,
-          nome: funcForm.nome,
-          tipo: 'trocador',
-        });
-        // Se estava editando um registro específico (tipo diferente de ambos), remove o antigo
+        await axios.post(`${API}/periodos/${id}/funcionarios`, { posto_id: funcForm.posto_id, nome: funcForm.nome, tipo: 'gerente' });
+        await axios.post(`${API}/periodos/${id}/funcionarios`, { posto_id: funcForm.posto_id, nome: funcForm.nome, tipo: 'trocador' });
         if (editFunc && editFunc.tipo !== 'gerente' && editFunc.tipo !== 'trocador') {
           await axios.delete(`${API}/periodos/${id}/funcionarios/${editFunc.id}`);
         }
       } else if (editFunc) {
-        await axios.put(`${API}/periodos/${id}/funcionarios/${editFunc.id}`, {
-          nome: funcForm.nome,
-          tipo: funcForm.tipo,
-        });
+        await axios.put(`${API}/periodos/${id}/funcionarios/${editFunc.id}`, { nome: funcForm.nome, tipo: funcForm.tipo });
       } else {
-        await axios.post(`${API}/periodos/${id}/funcionarios`, {
-          posto_id: funcForm.posto_id,
-          nome: funcForm.nome,
-          tipo: funcForm.tipo,
-        });
+        await axios.post(`${API}/periodos/${id}/funcionarios`, { posto_id: funcForm.posto_id, nome: funcForm.nome, tipo: funcForm.tipo });
       }
       setShowFuncModal(false);
       load();
@@ -202,6 +180,51 @@ export default function PeriodoDetailPage() {
   const doDeleteFunc = async () => {
     await axios.delete(`${API}/periodos/${id}/funcionarios/${deleteFunc.id}`);
     setDeleteFunc(null); load();
+  };
+
+  // ── FIX 2: Desqualificados via API
+  const isDesqualificado = (f) =>
+    desqualificados.some(d =>
+      d.posto_id === f.posto_id &&
+      d.nome.trim().toLowerCase() === f.nome.trim().toLowerCase() &&
+      d.tipo === f.tipo
+    );
+
+  const getDesqRecord = (f) =>
+    desqualificados.find(d =>
+      d.posto_id === f.posto_id &&
+      d.nome.trim().toLowerCase() === f.nome.trim().toLowerCase() &&
+      d.tipo === f.tipo
+    );
+
+  const confirmarDesqualificacao = async () => {
+    if (!motivoModal) return;
+    const posto = postos.find(p => p.codigo === motivoModal.posto_codigo);
+    if (!posto) return;
+    try {
+      await axios.post(`${API}/periodos/${id}/desqualificados`, {
+        nome: motivoModal.nome,
+        tipo: motivoModal.tipo,
+        posto_codigo: motivoModal.posto_codigo,
+        posto_id: posto.id,
+        motivo: motivoTexto,
+      });
+      setMotivoModal(null);
+      loadTodosFuncionarios();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Erro ao desqualificar');
+    }
+  };
+
+  const requalificar = async (f) => {
+    const rec = getDesqRecord(f);
+    if (!rec) return;
+    try {
+      await axios.delete(`${API}/periodos/${id}/desqualificados/${rec.id}`);
+      loadTodosFuncionarios();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Erro ao requalificar');
+    }
   };
 
   // ── Tornar produto especial
@@ -252,7 +275,6 @@ export default function PeriodoDetailPage() {
     return { total, corridos, fator: corridos / total };
   })();
 
-  // Desqualificados filtrados
   const funcDesqFiltrados = filterDesqPosto
     ? todosFuncionarios.filter(f => f.posto_codigo === filterDesqPosto)
     : todosFuncionarios;
@@ -486,6 +508,7 @@ export default function PeriodoDetailPage() {
                   <option value="">Todos os postos</option>
                   {postos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.nome}</option>)}
                 </select>
+                {/* FIX 1: placeholder updated to reflect produto search too */}
                 <input
                   placeholder="🔍 Funcionário ou produto…"
                   value={filterFunc}
@@ -494,14 +517,8 @@ export default function PeriodoDetailPage() {
                 />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Por página:</span>
-                  <select
-                    value={pageSize}
-                    onChange={e => { setPageSize(parseInt(e.target.value)); setPage(1); }}
-                    style={{ maxWidth: 90 }}
-                  >
-                    {[50, 100, 200, 500, 1000, 2000, 5000].map(n => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
+                  <select value={pageSize} onChange={e => { setPageSize(parseInt(e.target.value)); setPage(1); }} style={{ maxWidth: 90 }}>
+                    {[50, 100, 200, 500, 1000, 2000, 5000].map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </div>
               </div>
@@ -533,8 +550,7 @@ export default function PeriodoDetailPage() {
                         {isAdmin && (
                           <td>
                             {!especial ? (
-                              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
-                                onClick={() => tornarEspecial(v)}>
+                              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => tornarEspecial(v)}>
                                 ★ Tornar especial
                               </button>
                             ) : (
@@ -562,9 +578,7 @@ export default function PeriodoDetailPage() {
                   <button className="pag-btn" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</button>
                   {Array.from({ length: Math.min(5, Math.ceil(vendasTotal / pageSize)) }, (_, i) => {
                     const pg = i + 1;
-                    return (
-                      <button key={pg} className={`pag-btn ${page === pg ? 'on' : ''}`} onClick={() => setPage(pg)}>{pg}</button>
-                    );
+                    return <button key={pg} className={`pag-btn ${page === pg ? 'on' : ''}`} onClick={() => setPage(pg)}>{pg}</button>;
                   })}
                   {Math.ceil(vendasTotal / pageSize) > 5 && <span style={{ color: 'var(--text-muted)', padding: '0 4px' }}>…</span>}
                   <button className="pag-btn" disabled={page * pageSize >= vendasTotal} onClick={() => setPage(p => p + 1)}>›</button>
@@ -581,7 +595,8 @@ export default function PeriodoDetailPage() {
               <div>
                 <div className="card-title">Desqualificados</div>
                 <div className="card-sub">
-                  Lista todos os funcionários do período (frentistas, trocadores e gerentes). Desqualificados são excluídos do cálculo de comissões.
+                  Funcionários desqualificados têm comissão zerada no relatório.
+                  O motivo fica visível no relatório de comissões.
                 </div>
               </div>
               <select value={filterDesqPosto} onChange={e => setFilterDesqPosto(e.target.value)} style={{ maxWidth: 200 }}>
@@ -592,6 +607,11 @@ export default function PeriodoDetailPage() {
 
             {loadingDesq ? <Spinner text="Carregando funcionários…" /> : (
               <>
+                {desqualificados.length > 0 && (
+                  <div style={{ padding: '8px 16px', background: 'rgba(239,68,68,0.06)', borderBottom: '1px solid var(--border)', fontSize: 12, color: 'var(--red)' }}>
+                    ⚠️ {desqualificados.length} funcionário(s) desqualificado(s) — comissões zeradas no relatório
+                  </div>
+                )}
                 {funcDesqFiltrados.length === 0 ? (
                   <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>
                     Nenhum funcionário encontrado. Importe vendas ou cadastre funcionários primeiro.
@@ -607,8 +627,8 @@ export default function PeriodoDetailPage() {
                       </thead>
                       <tbody>
                         {funcDesqFiltrados.map((f, i) => {
-                          const key = `${f.posto_codigo}|${f.nome}|${f.tipo}`;
-                          const desq = desqualificados[key];
+                          const desq = isDesqualificado(f);
+                          const rec = getDesqRecord(f);
                           return (
                             <tr key={i} style={desq ? { background: 'rgba(239,68,68,0.05)' } : {}}>
                               <td><span className="badge badge-gray mono">{f.posto_codigo}</span></td>
@@ -620,21 +640,21 @@ export default function PeriodoDetailPage() {
                                   : <span className="badge badge-green">Qualificado</span>}
                               </td>
                               <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 220 }}>
-                                {desq?.motivo || <span style={{ color: 'var(--border-light)' }}>—</span>}
+                                {rec?.motivo || <span style={{ color: 'var(--border-light)' }}>—</span>}
                               </td>
                               {isAdmin && (
                                 <td>
                                   {desq ? (
-                                    <button className="btn btn-ghost btn-sm" onClick={() => {
-                                      const next = { ...desqualificados };
-                                      delete next[key];
-                                      saveDesq(next);
-                                    }}>Requalificar</button>
+                                    <button className="btn btn-ghost btn-sm" onClick={() => requalificar(f)}>
+                                      Requalificar
+                                    </button>
                                   ) : (
                                     <button className="btn btn-danger btn-sm" onClick={() => {
-                                      setMotivoModal({ key, nome: f.nome });
+                                      setMotivoModal({ nome: f.nome, tipo: f.tipo, posto_codigo: f.posto_codigo });
                                       setMotivoTexto('');
-                                    }}>Desqualificar</button>
+                                    }}>
+                                      Desqualificar
+                                    </button>
                                   )}
                                 </td>
                               )}
@@ -719,7 +739,7 @@ export default function PeriodoDetailPage() {
               </select>
               {funcForm.tipo === 'ambos' && (
                 <div className="form-hint" style={{ color: 'var(--amber)' }}>
-                  ⚡ Comissão gerencial (3% posto se meta) + comissão de trocador (faixa individual)
+                  ⚡ Comissão gerencial (soma frentistas + trocadores + 3% posto se meta) + comissão de trocador própria
                 </div>
               )}
             </div>
@@ -764,15 +784,14 @@ export default function PeriodoDetailPage() {
                 onChange={e => setMotivoTexto(e.target.value)}
                 style={{ resize: 'vertical' }}
               />
-              <div className="form-hint">Opcional — ficará registrado para consulta.</div>
+              <div className="form-hint">Opcional — ficará visível no relatório de comissões.</div>
             </div>
           </div>
           <div className="modal-foot">
             <button className="btn btn-ghost" onClick={() => setMotivoModal(null)}>Cancelar</button>
-            <button className="btn btn-danger" onClick={() => {
-              saveDesq({ ...desqualificados, [motivoModal.key]: { motivo: motivoTexto, nome: motivoModal.nome } });
-              setMotivoModal(null);
-            }}>Confirmar Desqualificação</button>
+            <button className="btn btn-danger" onClick={confirmarDesqualificacao}>
+              Confirmar Desqualificação
+            </button>
           </div>
         </Modal>
       )}

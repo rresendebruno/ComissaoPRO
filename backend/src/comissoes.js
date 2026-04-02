@@ -1,10 +1,14 @@
 /**
- * MOTOR DE CÁLCULO DE COMISSÕES v2.4
+ * MOTOR DE CÁLCULO DE COMISSÕES v3.0
  *
- * GERENTE - Comissão especial:
- *   comissao_gerente/un é aplicada sobre TODAS as unidades vendidas do produto
- *   no posto, por qualquer funcionário, sempre (independente de meta).
- *   Se o gerente ele mesmo vendeu, recebe TAMBÉM comissao do tipo do vendedor.
+ * FIX 2: Desqualificados — comissão zerada, motivo exibido no relatório
+ *
+ * FIX 3: GERENTE — comissão cumulativa:
+ *   - Recebe a soma das comissões de TODOS os frentistas e trocadores do posto (por faixa)
+ *   - + 3% do total do posto (somente se meta ≥ 100%)
+ *   - + comissão especial gerente (por unidades totais do produto no posto)
+ *   - + comissões dos itens especiais vendidos pelos funcionários do posto (como gerente)
+ *   Se acumula trocador: também recebe comissão de trocador pelas próprias vendas
  */
 
 function getFaixaFrentista(pct) {
@@ -36,9 +40,28 @@ function calcularProRata(periodo) {
   return { fator: diasCorridos / diasTotais, diasCorridos: diasCorridos, diasTotais: diasTotais, proRata: true };
 }
 
-function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios, periodo) {
+/**
+ * @param {Array} vendas
+ * @param {Array} metas
+ * @param {Array} produtosEspeciais
+ * @param {Array} periodoFuncionarios
+ * @param {Object} periodo
+ * @param {Array} desqualificados  — lista de { posto_id, nome, tipo, motivo }
+ */
+function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios, periodo, desqualificados) {
   var proRata = calcularProRata(periodo);
 
+  // FIX 2: build desqualificados index { "postoId|nome_lower|tipo": motivo }
+  var desqIdx = {};
+  if (desqualificados && desqualificados.length) {
+    for (var di = 0; di < desqualificados.length; di++) {
+      var d = desqualificados[di];
+      var dk = d.posto_id + '|' + d.nome.trim().toLowerCase() + '|' + d.tipo;
+      desqIdx[dk] = d.motivo || 'Desqualificado';
+    }
+  }
+
+  // Produtos especiais index
   var especiaisIdx = {};
   for (var pi = 0; pi < produtosEspeciais.length; pi++) {
     var pe = produtosEspeciais[pi];
@@ -71,6 +94,7 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     }
   }
 
+  // Pre-seed gerentes from periodoFuncionarios so they appear even with 0 vendas
   for (var pfi = 0; pfi < periodoFuncionarios.length; pfi++) {
     var pf = periodoFuncionarios[pfi];
     if (pf.tipo === 'gerente') {
@@ -79,6 +103,7 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     }
   }
 
+  // Accumulate vendas
   for (var vi = 0; vi < vendas.length; vi++) {
     var v = vendas[vi];
     ensurePosto(v.posto_id);
@@ -149,7 +174,7 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
 
     var res = resultado[postoId];
 
-    // Calcula itens especiais gerente: comissao_gerente/un x qtd total de cada produto no posto
+    // ── Produtos especiais: comissão do gerente sobre TODOS os itens do posto ──
     var itensEspeciaisGerentePosto = [];
     var totalEspecialGerentePosto  = 0;
     var epKeys = Object.keys(dados.especialPostoTotais);
@@ -168,7 +193,17 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       }
     }
 
-    // FRENTISTAS
+    // Monta set de nomes que são gerentes (para excluir da pool de trocadores)
+    var nomesGer = Object.keys(dados.gerentes);
+    var nomesGerentesSet = {};
+    for (var gsi = 0; gsi < nomesGer.length; gsi++) {
+      nomesGerentesSet[nomesGer[gsi].trim().toLowerCase()] = true;
+    }
+
+    // ── FRENTISTAS ──────────────────────────────────────────────────────────────
+    var totalComissaoFrentistas = 0;
+    var totalComissaoTrocadores = 0; // apenas trocadores puros (não-gerentes)
+
     var nomesFrent = Object.keys(dados.frentistas);
     for (var fi2 = 0; fi2 < nomesFrent.length; fi2++) {
       var nf = nomesFrent[fi2];
@@ -181,21 +216,35 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         comEspF += ff.itensEspeciaisProprios[ie].comissao_total;
       }
       var totF = comAgrF + comEspF;
+
+      var desqKeyF = postoId + '|' + nf.trim().toLowerCase() + '|frentista';
+      var desqMotivoF = desqIdx[desqKeyF];
+      var isDesqF = !!desqMotivoF;
+
       res.funcionarios.push({
         nome: nf, tipo: 'frentista',
         totalVendas: ff.totalVendas, metaEfetiva: metaFrentistaEfetiva,
-        pctMeta: pctF, taxaComissao: taxaF,
-        comissaoAgregados: comAgrF,
-        itensEspeciais: ff.itensEspeciaisProprios, comissaoEspeciais: comEspF,
-        totalComissao: totF
+        pctMeta: pctF, taxaComissao: isDesqF ? 0 : taxaF,
+        comissaoAgregados: isDesqF ? 0 : comAgrF,
+        itensEspeciais: ff.itensEspeciaisProprios,
+        comissaoEspeciais: isDesqF ? 0 : comEspF,
+        totalComissao: isDesqF ? 0 : totF,
+        desqualificado: isDesqF,
+        motivoDesqualificacao: desqMotivoF || null,
       });
-      res.totalComissoes += totF;
+      res.totalComissoes += isDesqF ? 0 : totF;
+      if (!isDesqF) totalComissaoFrentistas += comAgrF;
     }
 
-    // TROCADORES
+    // ── TROCADORES PUROS (exclui quem também é gerente) ───────────────────────
     var nomesTroc = Object.keys(dados.trocadores);
     for (var ti2 = 0; ti2 < nomesTroc.length; ti2++) {
       var nt = nomesTroc[ti2];
+
+      // Se este trocador também é gerente, NÃO entra como linha separada nem na pool
+      // (será tratado dentro do bloco de gerentes como acumulação própria)
+      if (nomesGerentesSet[nt.trim().toLowerCase()]) continue;
+
       var ft = dados.trocadores[nt];
       var pctT = metaTrocadorEfetiva > 0 ? ft.totalVendas / metaTrocadorEfetiva : 0;
       var taxaT = getFaixaTrocador(pctT);
@@ -205,36 +254,61 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         comEspT += ft.itensEspeciaisProprios[ie2].comissao_total;
       }
       var totT = comAgrT + comEspT;
+
+      var desqKeyT = postoId + '|' + nt.trim().toLowerCase() + '|trocador';
+      var desqMotivoT = desqIdx[desqKeyT];
+      var isDesqT = !!desqMotivoT;
+
       res.funcionarios.push({
         nome: nt, tipo: 'trocador',
         totalVendas: ft.totalVendas, metaEfetiva: metaTrocadorEfetiva,
-        pctT: pctT, taxaComissao: taxaT, pctMeta: pctT,
-        comissaoAgregados: comAgrT,
-        itensEspeciais: ft.itensEspeciaisProprios, comissaoEspeciais: comEspT,
-        totalComissao: totT
+        pctMeta: pctT, taxaComissao: isDesqT ? 0 : taxaT,
+        comissaoAgregados: isDesqT ? 0 : comAgrT,
+        itensEspeciais: ft.itensEspeciaisProprios,
+        comissaoEspeciais: isDesqT ? 0 : comEspT,
+        totalComissao: isDesqT ? 0 : totT,
+        desqualificado: isDesqT,
+        motivoDesqualificacao: desqMotivoT || null,
       });
-      res.totalComissoes += totT;
+      res.totalComissoes += isDesqT ? 0 : totT;
+      // Entra na pool da comissão gerencial
+      if (!isDesqT) totalComissaoTrocadores += comAgrT;
     }
 
-    // GERENTES
+    // ── GERENTES ────────────────────────────────────────────────────────────────
     var pctPosto       = metaPostoEfetiva > 0 ? dados.totalPosto / metaPostoEfetiva : 0;
     var gerenteAtingiu = pctPosto >= 1.0;
-    var nomesGer       = Object.keys(dados.gerentes);
 
     for (var gi3 = 0; gi3 < nomesGer.length; gi3++) {
       var ng = nomesGer[gi3];
       var fg = dados.gerentes[ng];
 
-      var comGerencial   = gerenteAtingiu ? dados.totalPosto * 0.03 : 0;
-      var comEspGerente  = totalEspecialGerentePosto; // sobre todo o posto, sempre
+      var desqKeyG = postoId + '|' + ng.trim().toLowerCase() + '|gerente';
+      var desqMotivoG = desqIdx[desqKeyG];
+      var isDesqG = !!desqMotivoG;
 
-      var vendaTroc = dados.trocadores[ng] || null;
-      var comTrocAcum    = 0;
-      var itensTroc      = [];
-      var comEspTroc     = 0;
-      var taxaTrocAcum   = 0;
-      var pctTrocAcum    = 0;
-      var vendasTroc     = 0;
+      // 1) Soma das comissões por faixa dos subordinados (frentistas + trocadores PUROS)
+      var comissaoSubordinados = totalComissaoFrentistas + totalComissaoTrocadores;
+
+      // 2) 3% do total do posto (se meta atingida)
+      var comissaoPercentualPosto = gerenteAtingiu ? dados.totalPosto * 0.03 : 0;
+
+      // 3) Comissão especial gerente (por qtd total de cada produto especial no posto)
+      var comEspGerente = totalEspecialGerentePosto;
+
+      // Base gerencial = subordinados + %posto + especiais gerente
+      var comissaoGerencialBase = comissaoSubordinados + comissaoPercentualPosto + comEspGerente;
+
+      // ── Acumulação própria como trocador ─────────────────────────────────
+      // O gerente que também vende como trocador recebe sua comissão de trocador
+      // pelas SUAS PRÓPRIAS vendas (não entra na pool de subordinados)
+      var vendaTroc   = dados.trocadores[ng] || null;
+      var comTrocAcum = 0;
+      var itensTroc   = [];
+      var comEspTroc  = 0;
+      var taxaTrocAcum = 0;
+      var pctTrocAcum  = 0;
+      var vendasTroc   = 0;
 
       if (vendaTroc) {
         pctTrocAcum  = metaTrocadorEfetiva > 0 ? vendaTroc.totalVendas / metaTrocadorEfetiva : 0;
@@ -247,9 +321,8 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         }
       }
 
-      var totGerencial = comGerencial + comEspGerente;
-      var totTroc      = comTrocAcum + comEspTroc;
-      var totGer       = totGerencial + totTroc;
+      var totTroc = isDesqG ? 0 : (comTrocAcum + comEspTroc);
+      var totGer  = isDesqG ? 0 : (comissaoGerencialBase + totTroc);
 
       res.funcionarios.push({
         nome: ng, tipo: 'gerente',
@@ -259,36 +332,33 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         metaEfetiva: metaPostoEfetiva,
         pctMeta: pctPosto,
         taxaComissao: gerenteAtingiu ? 0.03 : 0,
-        comissaoAgregados: comGerencial,
+
+        comissaoSubordinados: isDesqG ? 0 : comissaoSubordinados,
+        comissaoFrentistasBase: isDesqG ? 0 : totalComissaoFrentistas,
+        comissaoTrocadoresBase: isDesqG ? 0 : totalComissaoTrocadores,
+        comissaoPercentualPosto: isDesqG ? 0 : comissaoPercentualPosto,
+
+        comissaoAgregados: isDesqG ? 0 : comissaoGerencialBase,
         itensEspeciais: itensEspeciaisGerentePosto,
-        comissaoEspeciais: comEspGerente,
-        totalComissaoGerencial: totGerencial,
+        comissaoEspeciais: isDesqG ? 0 : comEspGerente,
+        totalComissaoGerencial: isDesqG ? 0 : comissaoGerencialBase,
+
         acumulaTrocador: !!vendaTroc,
         pctTrocadorAcumulado: pctTrocAcum,
         taxaTrocadorAcumulada: taxaTrocAcum,
-        comissaoTrocadorAcumulada: comTrocAcum,
+        comissaoTrocadorAcumulada: isDesqG ? 0 : comTrocAcum,
         itensEspeciaisTrocador: itensTroc,
-        comissaoEspeciaisTrocador: comEspTroc,
+        comissaoEspeciaisTrocador: isDesqG ? 0 : comEspTroc,
         totalComissaoTrocador: totTroc,
+
         totalComissao: totGer,
         metaAtingida: gerenteAtingiu,
-        semVendas: fg.totalVendas === 0 && !vendaTroc
+        semVendas: fg.totalVendas === 0 && !vendaTroc,
+
+        desqualificado: isDesqG,
+        motivoDesqualificacao: desqMotivoG || null,
       });
       res.totalComissoes += totGer;
-    }
-
-    // Remove trocadores ja contabilizados dentro do gerente
-    for (var gi4 = 0; gi4 < nomesGer.length; gi4++) {
-      var ngr = nomesGer[gi4];
-      if (dados.trocadores[ngr]) {
-        for (var xi = 0; xi < res.funcionarios.length; xi++) {
-          if (res.funcionarios[xi].nome === ngr && res.funcionarios[xi].tipo === 'trocador') {
-            res.totalComissoes -= res.funcionarios[xi].totalComissao;
-            res.funcionarios.splice(xi, 1);
-            break;
-          }
-        }
-      }
     }
 
     res.pctMetaPosto = pctPosto;

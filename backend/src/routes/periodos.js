@@ -75,7 +75,6 @@ router.post('/:id/funcionarios', auth, adminOnly, async (req, res) => {
   if (!['gerente','trocador'].includes(tipo))
     return res.status(400).json({ error: 'tipo deve ser gerente ou trocador' });
 
-  // Verifica se já existe este par (período, posto, nome, tipo) — sem ON CONFLICT que sobrescreveria
   const { rows: existe } = await query(
     `SELECT id FROM periodo_funcionarios
      WHERE periodo_id=$1 AND posto_id=$2 AND LOWER(TRIM(nome))=LOWER(TRIM($3)) AND tipo=$4`,
@@ -145,6 +144,61 @@ router.post('/:id/metas', auth, adminOnly, async (req, res) => {
   res.json(rows[0]);
 });
 
+// ── DESQUALIFICADOS ───────────────────────────────────────────────────────────
+// FIX 2: Desqualificados persistidos no banco de dados
+
+// Garante que a tabela de desqualificados existe (migração inline tolerante)
+async function ensureDesqTable() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS periodo_desqualificados (
+      id          SERIAL PRIMARY KEY,
+      periodo_id  INTEGER REFERENCES periodos(id) ON DELETE CASCADE,
+      posto_id    INTEGER NOT NULL,
+      posto_codigo VARCHAR(20) NOT NULL,
+      nome        VARCHAR(255) NOT NULL,
+      tipo        VARCHAR(20)  NOT NULL CHECK (tipo IN ('frentista','trocador','gerente')),
+      motivo      TEXT DEFAULT '',
+      created_at  TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(periodo_id, posto_id, nome, tipo)
+    );
+    CREATE INDEX IF NOT EXISTS idx_desq_periodo ON periodo_desqualificados(periodo_id);
+  `);
+}
+
+router.get('/:id/desqualificados', auth, async (req, res) => {
+  await ensureDesqTable();
+  const { rows } = await query(
+    `SELECT * FROM periodo_desqualificados WHERE periodo_id=$1 ORDER BY posto_codigo, nome`,
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
+router.post('/:id/desqualificados', auth, adminOnly, async (req, res) => {
+  const { nome, tipo, posto_codigo, posto_id, motivo } = req.body;
+  if (!nome || !tipo || !posto_codigo || !posto_id)
+    return res.status(400).json({ error: 'nome, tipo, posto_codigo e posto_id são obrigatórios' });
+
+  await ensureDesqTable();
+  const { rows } = await query(
+    `INSERT INTO periodo_desqualificados (periodo_id, posto_id, posto_codigo, nome, tipo, motivo)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (periodo_id, posto_id, nome, tipo) DO UPDATE SET motivo=$6
+     RETURNING *`,
+    [req.params.id, posto_id, posto_codigo, nome.trim(), tipo, motivo || '']
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.delete('/:periodoId/desqualificados/:id', auth, adminOnly, async (req, res) => {
+  await ensureDesqTable();
+  await query(
+    'DELETE FROM periodo_desqualificados WHERE id=$1 AND periodo_id=$2',
+    [req.params.id, req.params.periodoId]
+  );
+  res.json({ success: true });
+});
+
 // ── IMPORTAR PLANILHA ─────────────────────────────────────────────────────────
 
 router.post('/:id/importar', auth, adminOnly, async (req, res) => {
@@ -186,8 +240,6 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
   const postoIdx = {};
   for (const p of postos) postoIdx[p.codigo.toLowerCase()] = p;
 
-  // Se a pessoa tem cadastro como gerente E trocador, nas vendas ela entra como 'gerente'
-  // O motor de cálculo detecta automaticamente a acumulação via trocadores[]
   const funcEspIdx = {};
   for (const f of funcsEsp) {
     const k = `${f.posto_id}|${f.nome.trim().toLowerCase()}`;
@@ -287,7 +339,18 @@ router.get('/:id/comissoes', auth, async (req, res) => {
 
   if (!periodo.length) return res.status(404).json({ error: 'Período não encontrado' });
 
-  const comissoes = calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios, periodo[0]);
+  // Carrega desqualificados separadamente — tolerante a falha caso a tabela ainda não exista
+  let desqualificados = [];
+  try {
+    const { rows: desqRows } = await query(
+      'SELECT * FROM periodo_desqualificados WHERE periodo_id=$1', [req.params.id]
+    );
+    desqualificados = desqRows;
+  } catch (e) {
+    console.warn('Tabela periodo_desqualificados ainda não existe, ignorando:', e.message);
+  }
+
+  const comissoes = calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios, periodo[0], desqualificados);
 
   const metasMap = {};
   for (const m of metas) metasMap[m.posto_id] = m;
@@ -301,14 +364,23 @@ router.get('/:id/comissoes', auth, async (req, res) => {
 });
 
 // ── VENDAS PAGINADAS ──────────────────────────────────────────────────────────
+// FIX 1: busca por produto também
 
 router.get('/:id/vendas', auth, async (req, res) => {
   const { posto_id, funcionario, page = 1, limit = 50 } = req.query;
   const conditions = ['v.periodo_id=$1'];
   const params     = [req.params.id];
   let i = 2;
-  if (posto_id)    { conditions.push(`v.posto_id=$${i++}`);           params.push(posto_id); }
-  if (funcionario) { conditions.push(`v.funcionario ILIKE $${i++}`);  params.push(`%${funcionario}%`); }
+  if (posto_id) {
+    conditions.push(`v.posto_id=$${i++}`);
+    params.push(posto_id);
+  }
+  if (funcionario) {
+    // FIX 1: search both funcionario name AND produto
+    conditions.push(`(v.funcionario ILIKE $${i} OR v.produto ILIKE $${i})`);
+    params.push(`%${funcionario}%`);
+    i++;
+  }
 
   const limitVal = Math.min(Math.max(parseInt(limit) || 50, 1), 10000);
   const where  = conditions.join(' AND ');
