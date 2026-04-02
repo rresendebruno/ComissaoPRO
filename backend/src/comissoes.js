@@ -95,11 +95,17 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
   }
 
   // Pre-seed gerentes from periodoFuncionarios so they appear even with 0 vendas
+  // Also build index of gerentes that also accumulate trocador (tipo='ambos' cadastrado como dois registros)
+  var gerenteTrocadorIdx = {};
   for (var pfi = 0; pfi < periodoFuncionarios.length; pfi++) {
     var pf = periodoFuncionarios[pfi];
     if (pf.tipo === 'gerente') {
       ensurePosto(pf.posto_id);
       ensureFunc(porPosto[pf.posto_id].gerentes, pf.nome.trim());
+    }
+    if (pf.tipo === 'trocador') {
+      var gtKey = String(pf.posto_id) + '|' + pf.nome.trim().toLowerCase();
+      gerenteTrocadorIdx[gtKey] = true;
     }
   }
 
@@ -207,6 +213,12 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     var nomesFrent = Object.keys(dados.frentistas);
     for (var fi2 = 0; fi2 < nomesFrent.length; fi2++) {
       var nf = nomesFrent[fi2];
+
+      // Se este frentista também é gerente, NÃO entra como linha separada nem na pool
+      // (pode ocorrer quando importação salva vendas do gerente como 'frentista'
+      //  porque o nome da planilha não bateu com o cadastro em periodo_funcionarios)
+      if (nomesGerentesSet[nf.trim().toLowerCase()]) continue;
+
       var ff = dados.frentistas[nf];
       var pctF = metaFrentistaEfetiva > 0 ? ff.totalVendas / metaFrentistaEfetiva : 0;
       var taxaF = getFaixaFrentista(pctF);
@@ -283,6 +295,17 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       var ng = nomesGer[gi3];
       var fg = dados.gerentes[ng];
 
+      // Se o gerente tem vendas salvas como frentista no banco
+      // (ocorre quando nome da planilha não bateu na importação),
+      // mescla essas vendas em fg para que sejam contadas corretamente
+      if (dados.frentistas[ng]) {
+        fg.totalVendas += dados.frentistas[ng].totalVendas;
+        // Mescla itens especiais próprios também
+        for (var mfi = 0; mfi < dados.frentistas[ng].itensEspeciaisProprios.length; mfi++) {
+          fg.itensEspeciaisProprios.push(dados.frentistas[ng].itensEspeciaisProprios[mfi]);
+        }
+      }
+
       var desqKeyG = postoId + '|' + ng.trim().toLowerCase() + '|gerente';
       var desqMotivoG = desqIdx[desqKeyG];
       var isDesqG = !!desqMotivoG;
@@ -300,9 +323,15 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       var comissaoGerencialBase = comissaoSubordinados + comissaoPercentualPosto + comEspGerente;
 
       // ── Acumulação própria como trocador ─────────────────────────────────
-      // O gerente que também vende como trocador recebe sua comissão de trocador
-      // pelas SUAS PRÓPRIAS vendas (não entra na pool de subordinados)
+      // O gerente que também acumula trocador recebe comissão de trocador pelas suas vendas.
+      // CASO 1: importação separou vendas — dados.trocadores[ng] tem as vendas como trocador
+      // CASO 2: importação salvou tudo como 'gerente' (funcEspIdx prioriza gerente) —
+      //   neste caso usamos fg.totalVendas (todas as vendas do gerente) como base de trocador
+      //   desde que ele esteja em periodoFuncionarios como trocador (gerenteTrocadorIdx)
       var vendaTroc   = dados.trocadores[ng] || null;
+      var gtIdxKey    = String(postoId) + '|' + ng.trim().toLowerCase();
+      var isAmbos     = !!gerenteTrocadorIdx[gtIdxKey];
+
       var comTrocAcum = 0;
       var itensTroc   = [];
       var comEspTroc  = 0;
@@ -311,6 +340,7 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       var vendasTroc   = 0;
 
       if (vendaTroc) {
+        // Caso 1: tem vendas separadas como trocador
         pctTrocAcum  = metaTrocadorEfetiva > 0 ? vendaTroc.totalVendas / metaTrocadorEfetiva : 0;
         taxaTrocAcum = getFaixaTrocador(pctTrocAcum);
         comTrocAcum  = vendaTroc.totalVendas * taxaTrocAcum;
@@ -319,7 +349,39 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         for (var ie3 = 0; ie3 < itensTroc.length; ie3++) {
           comEspTroc += itensTroc[ie3].comissao_total;
         }
+      } else if (isAmbos && fg.totalVendas > 0) {
+        // Caso 2: importação salvou tudo como 'gerente', mas ele é ambos —
+        // aplica comissão de trocador sobre TODAS as suas vendas próprias.
+        // Os itensEspeciaisProprios foram calculados com comissao_gerente na importação,
+        // então recalculamos aqui usando comissao_trocador do produto especial.
+        pctTrocAcum  = metaTrocadorEfetiva > 0 ? fg.totalVendas / metaTrocadorEfetiva : 0;
+        taxaTrocAcum = getFaixaTrocador(pctTrocAcum);
+        comTrocAcum  = fg.totalVendas * taxaTrocAcum;
+        vendasTroc   = fg.totalVendas;
+
+        // Recalcula itens especiais com taxa de trocador (não de gerente)
+        var itensGer = fg.itensEspeciaisProprios || [];
+        itensTroc = [];
+        for (var ie3b = 0; ie3b < itensGer.length; ie3b++) {
+          var igItem   = itensGer[ie3b];
+          var peKeyTroc = String(postoId) + '|' + igItem.produto.trim().toLowerCase();
+          var peTroc    = especiaisIdx[peKeyTroc];
+          var comTrocUnit = peTroc ? Number(peTroc.comissao_trocador) : igItem.comissao_unit;
+          var comTrocTotal = igItem.quantidade * comTrocUnit;
+          if (comTrocUnit > 0) {
+            itensTroc.push({
+              produto: igItem.produto,
+              quantidade: igItem.quantidade,
+              comissao_unit: comTrocUnit,
+              comissao_total: comTrocTotal
+            });
+            comEspTroc += comTrocTotal;
+          }
+        }
       }
+
+      // acumulaTrocador é true se tem vendas como trocador OU se é cadastrado como ambos
+      var acumulaTrocador = !!(vendaTroc || isAmbos);
 
       var totTroc = isDesqG ? 0 : (comTrocAcum + comEspTroc);
       var totGer  = isDesqG ? 0 : (comissaoGerencialBase + totTroc);
@@ -343,7 +405,7 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         comissaoEspeciais: isDesqG ? 0 : comEspGerente,
         totalComissaoGerencial: isDesqG ? 0 : comissaoGerencialBase,
 
-        acumulaTrocador: !!vendaTroc,
+        acumulaTrocador: acumulaTrocador,
         pctTrocadorAcumulado: pctTrocAcum,
         taxaTrocadorAcumulada: taxaTrocAcum,
         comissaoTrocadorAcumulada: isDesqG ? 0 : comTrocAcum,
