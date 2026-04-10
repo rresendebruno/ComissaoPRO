@@ -299,7 +299,11 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
     );
   }
 
-  if (sheets_url) await query('UPDATE periodos SET sheets_url=$1 WHERE id=$2', [sheets_url, periodoId]);
+  // Atualiza sheets_url e grava timestamp da última importação
+  await query(
+    'UPDATE periodos SET sheets_url=COALESCE($1, sheets_url), data_ultima_importacao=NOW() WHERE id=$2',
+    [sheets_url || null, periodoId]
+  );
 
   res.json({
     success: true,
@@ -360,6 +364,7 @@ router.get('/:id/comissoes', auth, async (req, res) => {
     comissoes,
     metas: metasMap,
     totalVendas: vendas.length,
+    dataUltimaImportacao: periodo[0].data_ultima_importacao || null,
   });
 });
 

@@ -16,6 +16,7 @@ export default function ComissoesPage() {
   const [loading, setLoading] = useState(false);
   const [expandedPosto, setExpandedPosto] = useState(null);
   const [tipoFiltro, setTipoFiltro] = useState('todos');
+  const [dataAtualizacao, setDataAtualizacao] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -36,6 +37,7 @@ export default function ComissoesPage() {
     axios.get(`${API}/periodos/${periodoId}/comissoes`, { params }).then(r => {
       setComissoes(r.data.comissoes);
       setPeriodoInfo(r.data.periodo);
+      setDataAtualizacao(r.data.dataUltimaImportacao || null);
     }).finally(() => setLoading(false));
   }, [periodoId, postoFiltro]);
 
@@ -68,6 +70,11 @@ export default function ComissoesPage() {
           <div className="topbar-title">Relatório de Comissões</div>
           <div className="topbar-sub">
             Calculado conforme faixas de atingimento — avaliação individual por colaborador
+            {dataAtualizacao && (
+              <span style={{ marginLeft: 8, color: 'var(--text-muted)' }}>
+                · Última importação: {new Date(dataAtualizacao).toLocaleString('pt-BR')}
+              </span>
+            )}
             {proRataInfo?.ativo && (
               <span style={{ marginLeft: 8, color: 'var(--amber)' }}>
                 · Pro rata: {proRataInfo.corridos}/{proRataInfo.totais} dias ({(proRataInfo.fator * 100).toFixed(1)}%)
@@ -326,13 +333,11 @@ export default function ComissoesPage() {
                       <thead>
                         <tr>
                           <th>Gerente</th>
-                          <th className="text-right">Σ Com. Frentistas</th>
-                          <th className="text-right">Σ Com. Trocadores</th>
+                          <th className="text-right">Com. Própria (Frent.)</th>
+                          <th className="text-right" style={{ color: 'var(--amber)' }}>Com. Própria (Troc.)</th>
                           <th className="text-right">3% Total Posto</th>
                           <th className="text-right">Com. Esp. Gerente</th>
                           <th className="text-right">% Meta Posto</th>
-                          {/* trocador acum */}
-                          <th className="text-right" style={{ color: 'var(--amber)' }}>Com. Trocador Própria</th>
                           <th className="text-right" style={{ color: 'var(--green)' }}>Total</th>
                         </tr>
                       </thead>
@@ -356,14 +361,18 @@ export default function ComissoesPage() {
                                   )}
                                 </td>
 
-                                {/* FIX 3: Σ frentistas */}
-                                <td className="text-right mono" style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-                                  {fmt(f.comissaoFrentistasBase)}
+                                {/* Comissão própria como frentista */}
+                                <td className="text-right mono" style={{ fontSize: 12 }}>
+                                  {(f.totalPropFrentista > 0 && !f.desqualificado)
+                                    ? <span style={{ color: 'var(--text-dim)' }}>{fmt(f.totalPropFrentista)}</span>
+                                    : <span className="muted">—</span>}
                                 </td>
 
-                                {/* FIX 3: Σ trocadores */}
-                                <td className="text-right mono" style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-                                  {fmt(f.comissaoTrocadoresBase)}
+                                {/* Comissão própria como trocador (só se tambemTrocador) */}
+                                <td className="text-right mono" style={{ fontSize: 12, color: 'var(--amber)' }}>
+                                  {(f.tambemTrocador && f.totalPropTrocador > 0 && !f.desqualificado)
+                                    ? fmt(f.totalPropTrocador)
+                                    : <span className="muted">—</span>}
                                 </td>
 
                                 {/* 3% posto */}
@@ -383,15 +392,6 @@ export default function ComissoesPage() {
                                   <span className={`badge ${fxPosto.color}`}>{(f.pctMeta * 100).toFixed(1)}%</span>
                                 </td>
 
-                                {/* Trocador acumulado */}
-                                <td className="text-right mono" style={{ color: f.acumulaTrocador ? 'var(--amber)' : 'var(--text-muted)' }}>
-                                  {f.acumulaTrocador && !f.desqualificado
-                                    ? <>{fmt(f.comissaoTrocadorAcumulada)}
-                                        {f.comissaoEspeciaisTrocador > 0 && <span style={{ fontSize: 10, color: 'var(--amber)', marginLeft: 4 }}>+{fmt(f.comissaoEspeciaisTrocador)} esp</span>}
-                                      </>
-                                    : '—'}
-                                </td>
-
                                 {/* Total */}
                                 <td className="text-right mono bold" style={{ color: f.desqualificado ? 'var(--red)' : 'var(--green)' }}>
                                   {fmt(f.totalComissao)}
@@ -407,15 +407,15 @@ export default function ComissoesPage() {
                                 </tr>
                               )}
 
-                              {/* FIX 3: breakdown row */}
-                              {!f.desqualificado && (f.comissaoFrentistasBase > 0 || f.comissaoTrocadoresBase > 0) && (
+                              {/* breakdown row */}
+                              {!f.desqualificado && (
                                 <tr style={{ background: 'rgba(79,110,247,0.03)' }}>
                                   <td colSpan={8} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--text-muted)' }}>
-                                    Cumulativo: Σfrentistas {fmt(f.comissaoFrentistasBase)} + Σtrocadores {fmt(f.comissaoTrocadoresBase)}
-                                    {f.metaAtingida && ` + 3% posto ${fmt(f.comissaoPercentualPosto)}`}
-                                    {f.comissaoEspeciais > 0 && ` + especiais gerente ${fmt(f.comissaoEspeciais)}`}
-                                    {' = '}<strong style={{ color: 'var(--accent)' }}>{fmt(f.totalComissaoGerencial)}</strong>
-                                    {f.acumulaTrocador && ` + trocador próprio ${fmt(f.totalComissaoTrocador)}`}
+                                    {f.totalPropFrentista > 0 && `Próprio frent. ${fmt(f.totalPropFrentista)}`}
+                                    {f.tambemTrocador && f.totalPropTrocador > 0 && ` + próprio troc. ${fmt(f.totalPropTrocador)}`}
+                                    {f.metaAtingida ? ` + 3% posto ${fmt(f.comissaoPercentualPosto)}` : ' (meta não atingida)'}
+                                    {f.comissaoEspeciais > 0 && ` + esp.gerente ${fmt(f.comissaoEspeciais)}`}
+                                    {' = '}<strong style={{ color: 'var(--accent)' }}>{fmt(f.totalComissao)}</strong>
                                   </td>
                                 </tr>
                               )}
@@ -454,11 +454,10 @@ export default function ComissoesPage() {
                       </tbody>
                       <tfoot>
                         <tr>
-                          <td colSpan={3} style={{ paddingLeft: 16 }}>Subtotal gerentes</td>
+                          <td colSpan={4} style={{ paddingLeft: 16 }}>Subtotal gerentes</td>
                           <td className="text-right mono">{fmt(gerentes.reduce((s, f) => s + (f.comissaoPercentualPosto || 0), 0))}</td>
-                          <td className="text-right mono">{fmt(gerentes.reduce((s, f) => s + f.comissaoEspeciais, 0))}</td>
+                          <td className="text-right mono">{fmt(gerentes.reduce((s, f) => s + (f.comissaoEspeciais || 0), 0))}</td>
                           <td />
-                          <td className="text-right mono" style={{ color: 'var(--amber)' }}>{fmt(gerentes.reduce((s, f) => s + (f.comissaoTrocadorAcumulada || 0), 0))}</td>
                           <td className="text-right mono" style={{ color: 'var(--green)' }}>
                             {fmt(gerentes.reduce((s, f) => s + f.totalComissao, 0))}
                           </td>

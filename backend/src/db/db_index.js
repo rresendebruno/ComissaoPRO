@@ -135,6 +135,9 @@ async function migrate() {
     $migration$;
   `);
 
+  // Adiciona coluna data_ultima_importacao em periodos se não existir
+  await query(`ALTER TABLE periodos ADD COLUMN IF NOT EXISTS data_ultima_importacao TIMESTAMPTZ`);
+
   const { rows } = await query(`SELECT id FROM users WHERE username = 'admin'`);
   if (rows.length === 0) {
     const bcrypt = require('bcryptjs');

@@ -1,14 +1,29 @@
 /**
- * MOTOR DE CÁLCULO DE COMISSÕES v3.0
+ * MOTOR DE CÁLCULO DE COMISSÕES v5.0
  *
- * FIX 2: Desqualificados — comissão zerada, motivo exibido no relatório
+ * REGRAS:
  *
- * FIX 3: GERENTE — comissão cumulativa:
- *   - Recebe a soma das comissões de TODOS os frentistas e trocadores do posto (por faixa)
- *   - + 3% do total do posto (somente se meta ≥ 100%)
- *   - + comissão especial gerente (por unidades totais do produto no posto)
- *   - + comissões dos itens especiais vendidos pelos funcionários do posto (como gerente)
- *   Se acumula trocador: também recebe comissão de trocador pelas próprias vendas
+ * FRENTISTA:
+ *   comissão por faixa (meta individual) + itens especiais
+ *
+ * TROCADOR:
+ *   comissão por faixa (meta individual) + itens especiais
+ *
+ * GERENTE:
+ *   A) Se vendeu (lançou no cartão como frentista):
+ *      → comissão de FRENTISTA pelas próprias vendas (usa meta e faixa de frentista)
+ *   B) Se também é trocador de óleo (cadastrado como trocador em periodoFuncionarios):
+ *      → comissão de TROCADOR pelas próprias vendas de trocador (usa meta e faixa de trocador)
+ *   C) Sempre:
+ *      → soma das comissões de faixa de TODOS os subordinados (frentistas + trocadores puros)
+ *      → + 3% do total do posto SE meta posto >= 100%
+ *      → + itens especiais gerente (comissao_gerente/un × qtd total do posto)
+ *
+ * CLASSIFICAÇÃO DAS VENDAS:
+ *   - tipo_funcionario='gerente' OU cadastrado como gerente → grupo gerentes
+ *   - cadastrado como trocador (e não gerente) → trocadores
+ *   - tipo_funcionario='trocador' + cadastrado como gerente → vendas trocador do gerente
+ *   - demais → frentistas
  */
 
 function getFaixaFrentista(pct) {
@@ -31,402 +46,395 @@ function calcularProRata(periodo) {
   if (periodo.status === 'fechado') {
     return { fator: 1, diasCorridos: null, diasTotais: null, proRata: false };
   }
-  var inicio = new Date(periodo.data_inicio);
-  var fim    = new Date(periodo.data_fim);
-  var hoje   = new Date();
+  var inicio       = new Date(periodo.data_inicio);
+  var fim          = new Date(periodo.data_fim);
+  var hoje         = new Date();
   var diasTotais   = Math.round((fim - inicio) / 86400000) + 1;
   var referencia   = hoje < fim ? hoje : fim;
   var diasCorridos = Math.max(1, Math.round((referencia - inicio) / 86400000) + 1);
-  return { fator: diasCorridos / diasTotais, diasCorridos: diasCorridos, diasTotais: diasTotais, proRata: true };
+  return {
+    fator: diasCorridos / diasTotais,
+    diasCorridos: diasCorridos,
+    diasTotais: diasTotais,
+    proRata: true
+  };
 }
 
-/**
- * @param {Array} vendas
- * @param {Array} metas
- * @param {Array} produtosEspeciais
- * @param {Array} periodoFuncionarios
- * @param {Object} periodo
- * @param {Array} desqualificados  — lista de { posto_id, nome, tipo, motivo }
- */
 function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios, periodo, desqualificados) {
   var proRata = calcularProRata(periodo);
 
-  // FIX 2: build desqualificados index { "postoId|nome_lower|tipo": motivo }
+  // ── Índices ──────────────────────────────────────────────────────────────
   var desqIdx = {};
   if (desqualificados && desqualificados.length) {
-    for (var di = 0; di < desqualificados.length; di++) {
-      var d = desqualificados[di];
-      var dk = d.posto_id + '|' + d.nome.trim().toLowerCase() + '|' + d.tipo;
-      desqIdx[dk] = d.motivo || 'Desqualificado';
+    for (var i = 0; i < desqualificados.length; i++) {
+      var dq = desqualificados[i];
+      desqIdx[String(dq.posto_id) + '|' + dq.nome.trim().toLowerCase() + '|' + dq.tipo] = dq.motivo || 'Desqualificado';
     }
   }
 
-  // Produtos especiais index
-  var especiaisIdx = {};
-  for (var pi = 0; pi < produtosEspeciais.length; pi++) {
-    var pe = produtosEspeciais[pi];
-    var peKey = pe.posto_id + '|' + pe.nome_produto.trim().toLowerCase();
-    especiaisIdx[peKey] = pe;
+  var espIdx = {};
+  for (var i = 0; i < produtosEspeciais.length; i++) {
+    var pe = produtosEspeciais[i];
+    espIdx[String(pe.posto_id) + '|' + pe.nome_produto.trim().toLowerCase()] = pe;
   }
 
   var metasIdx = {};
-  for (var mi = 0; mi < metas.length; mi++) {
-    metasIdx[metas[mi].posto_id] = metas[mi];
+  for (var i = 0; i < metas.length; i++) {
+    metasIdx[String(metas[i].posto_id)] = metas[i];
   }
 
+  // ── Conjuntos do cadastro (periodoFuncionarios) ──────────────────────────
+  // gerentesSet:  "postoId|nome_lower" → true   (quem é gerente)
+  // tambemTrocSet: "postoId|nome_lower" → true  (gerente que TAMBÉM é trocador)
+  // trocPuroSet:  "postoId|nome_lower" → true   (trocador que NÃO é gerente)
+  var gerentesSet  = {};
+  var tambemTrocSet = {};
+  var trocPuroSet   = {};
+
+  for (var i = 0; i < periodoFuncionarios.length; i++) {
+    var pf  = periodoFuncionarios[i];
+    var pfk = String(pf.posto_id) + '|' + pf.nome.trim().toLowerCase();
+    if (pf.tipo === 'gerente') gerentesSet[pfk]  = true;
+    if (pf.tipo === 'trocador') tambemTrocSet[pfk] = true; // pode ser gerente também
+  }
+  for (var k in tambemTrocSet) {
+    if (!gerentesSet[k]) trocPuroSet[k] = true;
+    // se é gerente E trocador → fica só em tambemTrocSet
+  }
+
+  // ── Acumulação de vendas por posto ───────────────────────────────────────
   var porPosto = {};
 
-  function ensurePosto(postoId) {
-    if (!porPosto[postoId]) {
-      porPosto[postoId] = {
-        frentistas: {},
-        trocadores: {},
-        gerentes: {},
+  function getPosto(sid) {
+    if (!porPosto[sid]) {
+      porPosto[sid] = {
+        frentistas: {},  // nome → { totalVendas, itensEsp }
+        trocadores: {},  // nome → { totalVendas, itensEsp }  (trocadores puros)
+        gerentes:   {},  // nome → { vendasFrent, vendasTroc, itensEspFrent, itensEspTroc }
         totalPosto: 0,
-        especialPostoTotais: {}
+        espPosto:   {}   // peKey → { pe, qtdTotal }
       };
     }
+    return porPosto[sid];
   }
 
-  function ensureFunc(grupo, nome) {
-    if (!grupo[nome]) {
-      grupo[nome] = { totalVendas: 0, itensEspeciaisProprios: [] };
-    }
+  function getSimple(grupo, nome) {
+    if (!grupo[nome]) grupo[nome] = { totalVendas: 0, itensEsp: [] };
+    return grupo[nome];
   }
 
-  // Pre-seed gerentes from periodoFuncionarios so they appear even with 0 vendas
-  // Also build index of gerentes that also accumulate trocador (tipo='ambos' cadastrado como dois registros)
-  var gerenteTrocadorIdx = {};
-  for (var pfi = 0; pfi < periodoFuncionarios.length; pfi++) {
-    var pf = periodoFuncionarios[pfi];
+  function getGerente(grupo, nome) {
+    if (!grupo[nome]) grupo[nome] = {
+      vendasFrent: 0, itensEspFrent: [],
+      vendasTroc:  0, itensEspTroc:  []
+    };
+    return grupo[nome];
+  }
+
+  // Pre-seed gerentes cadastrados (aparecem mesmo sem vendas)
+  for (var i = 0; i < periodoFuncionarios.length; i++) {
+    var pf = periodoFuncionarios[i];
     if (pf.tipo === 'gerente') {
-      ensurePosto(pf.posto_id);
-      ensureFunc(porPosto[pf.posto_id].gerentes, pf.nome.trim());
-    }
-    if (pf.tipo === 'trocador') {
-      var gtKey = String(pf.posto_id) + '|' + pf.nome.trim().toLowerCase();
-      gerenteTrocadorIdx[gtKey] = true;
+      getGerente(getPosto(String(pf.posto_id)).gerentes, pf.nome.trim());
     }
   }
 
-  // Accumulate vendas
-  for (var vi = 0; vi < vendas.length; vi++) {
-    var v = vendas[vi];
-    ensurePosto(v.posto_id);
-    var posto = porPosto[v.posto_id];
-    posto.totalPosto += Number(v.valor_final);
+  // Acumula vendas
+  for (var i = 0; i < vendas.length; i++) {
+    var v    = vendas[i];
+    var sid  = String(v.posto_id);
+    var p    = getPosto(sid);
+    var nome = v.funcionario;
+    var vf   = Number(v.valor_final);
+    var qtd  = Number(v.quantidade);
+    var tipo = v.tipo_funcionario;
 
-    var tipo  = v.tipo_funcionario;
-    var grupo = tipo === 'gerente'  ? posto.gerentes
-              : tipo === 'trocador' ? posto.trocadores
-              : posto.frentistas;
+    p.totalPosto += vf;
 
-    ensureFunc(grupo, v.funcionario);
-    grupo[v.funcionario].totalVendas += Number(v.valor_final);
+    var fnKey = sid + '|' + nome.trim().toLowerCase();
 
-    var peKey2 = v.posto_id + '|' + v.produto.trim().toLowerCase();
-    var pe2    = especiaisIdx[peKey2];
-    if (pe2) {
-      var qtd = Number(v.quantidade);
+    // Decide grupo e subcategoria
+    var isGerente   = tipo === 'gerente' || gerentesSet[fnKey];
+    var isTrocPuro  = !isGerente && (tipo === 'trocador' || trocPuroSet[fnKey]);
+    // isTrocGer: gerente que também é trocador E esta venda específica é de trocador
+    // (tipo_funcionario='trocador' na venda)
+    var isTrocGer   = isGerente && tipo === 'trocador' && tambemTrocSet[fnKey];
 
-      if (!posto.especialPostoTotais[peKey2]) {
-        posto.especialPostoTotais[peKey2] = { pe: pe2, quantidadeTotal: 0 };
+    if (isGerente) {
+      var fg = getGerente(p.gerentes, nome);
+      if (isTrocGer) {
+        // Venda de trocador do gerente
+        fg.vendasTroc += vf;
+        // item especial com taxa de trocador
+        var peT = espIdx[sid + '|' + v.produto.trim().toLowerCase()];
+        if (peT) {
+          var cu = Number(peT.comissao_trocador);
+          if (cu > 0) fg.itensEspTroc.push({ produto: v.produto, quantidade: qtd, comissao_unit: cu, comissao_total: qtd * cu });
+        }
+      } else {
+        // Venda de frentista do gerente
+        fg.vendasFrent += vf;
+        // item especial com taxa de frentista (ou gerente se configurado assim)
+        var peF = espIdx[sid + '|' + v.produto.trim().toLowerCase()];
+        if (peF) {
+          var cu = Number(peF.comissao_frentista);
+          if (cu > 0) fg.itensEspFrent.push({ produto: v.produto, quantidade: qtd, comissao_unit: cu, comissao_total: qtd * cu });
+        }
       }
-      posto.especialPostoTotais[peKey2].quantidadeTotal += qtd;
-
-      var comUnitVendedor =
-        tipo === 'gerente'  ? Number(pe2.comissao_gerente)  :
-        tipo === 'trocador' ? Number(pe2.comissao_trocador) :
-                              Number(pe2.comissao_frentista);
-
-      if (comUnitVendedor > 0) {
-        grupo[v.funcionario].itensEspeciaisProprios.push({
-          produto: v.produto,
-          quantidade: qtd,
-          comissao_unit: comUnitVendedor,
-          comissao_total: qtd * comUnitVendedor
-        });
+    } else if (isTrocPuro) {
+      var ft = getSimple(p.trocadores, nome);
+      ft.totalVendas += vf;
+      var peT2 = espIdx[sid + '|' + v.produto.trim().toLowerCase()];
+      if (peT2) {
+        var cu2 = Number(peT2.comissao_trocador);
+        if (cu2 > 0) ft.itensEsp.push({ produto: v.produto, quantidade: qtd, comissao_unit: cu2, comissao_total: qtd * cu2 });
       }
+    } else {
+      var ff = getSimple(p.frentistas, nome);
+      ff.totalVendas += vf;
+      var peF2 = espIdx[sid + '|' + v.produto.trim().toLowerCase()];
+      if (peF2) {
+        var cu3 = Number(peF2.comissao_frentista);
+        if (cu3 > 0) ff.itensEsp.push({ produto: v.produto, quantidade: qtd, comissao_unit: cu3, comissao_total: qtd * cu3 });
+      }
+    }
+
+    // Acumula total do produto especial no posto (para comissão gerente)
+    var peKey = sid + '|' + v.produto.trim().toLowerCase();
+    if (espIdx[peKey]) {
+      if (!p.espPosto[peKey]) p.espPosto[peKey] = { pe: espIdx[peKey], qtdTotal: 0 };
+      p.espPosto[peKey].qtdTotal += qtd;
     }
   }
 
+  // ── Calcula comissões ────────────────────────────────────────────────────
   var resultado = {};
 
   var postoIds = Object.keys(porPosto);
-  for (var postoIdx2 = 0; postoIdx2 < postoIds.length; postoIdx2++) {
-    var postoId = postoIds[postoIdx2];
-    var dados   = porPosto[postoId];
-    var meta    = metasIdx[postoId] || { meta_frentista: 0, meta_trocador: 0, meta_posto: 0 };
+  for (var pi = 0; pi < postoIds.length; pi++) {
+    var sid   = postoIds[pi];
+    var dados = porPosto[sid];
+    var meta  = metasIdx[sid] || { meta_frentista: 0, meta_trocador: 0, meta_posto: 0 };
 
-    var metaFrentistaEfetiva = Number(meta.meta_frentista) * proRata.fator;
-    var metaTrocadorEfetiva  = Number(meta.meta_trocador)  * proRata.fator;
-    var metaPostoEfetiva     = Number(meta.meta_posto)     * proRata.fator;
+    var mF = Number(meta.meta_frentista) * proRata.fator;
+    var mT = Number(meta.meta_trocador)  * proRata.fator;
+    var mP = Number(meta.meta_posto)     * proRata.fator;
+    var pctPosto = mP > 0 ? dados.totalPosto / mP : 0;
 
-    resultado[postoId] = {
+    var res = {
       funcionarios: [],
       totalComissoes: 0,
-      totalVendasPosto: dados.totalPosto,
-      metaFrentista: Number(meta.meta_frentista),
-      metaTrocador:  Number(meta.meta_trocador),
-      metaPosto:     Number(meta.meta_posto),
-      metaFrentistaEfetiva: metaFrentistaEfetiva,
-      metaTrocadorEfetiva:  metaTrocadorEfetiva,
-      metaPostoEfetiva:     metaPostoEfetiva,
-      proRata:      proRata.proRata,
-      fatorProRata: proRata.fator,
-      diasCorridos: proRata.diasCorridos,
-      diasTotais:   proRata.diasTotais
+      totalVendasPosto:      dados.totalPosto,
+      metaFrentista:         Number(meta.meta_frentista),
+      metaTrocador:          Number(meta.meta_trocador),
+      metaPosto:             Number(meta.meta_posto),
+      metaFrentistaEfetiva:  mF,
+      metaTrocadorEfetiva:   mT,
+      metaPostoEfetiva:      mP,
+      pctMetaPosto:          pctPosto,
+      proRata:               proRata.proRata,
+      fatorProRata:          proRata.fator,
+      diasCorridos:          proRata.diasCorridos,
+      diasTotais:            proRata.diasTotais,
     };
+    resultado[sid] = res;
 
-    var res = resultado[postoId];
-
-    // ── Produtos especiais: comissão do gerente sobre TODOS os itens do posto ──
-    var itensEspeciaisGerentePosto = [];
-    var totalEspecialGerentePosto  = 0;
-    var epKeys = Object.keys(dados.especialPostoTotais);
-    for (var ek = 0; ek < epKeys.length; ek++) {
-      var entry = dados.especialPostoTotais[epKeys[ek]];
-      var comGUnit = Number(entry.pe.comissao_gerente);
-      if (comGUnit > 0) {
-        var comGTotal = entry.quantidadeTotal * comGUnit;
-        itensEspeciaisGerentePosto.push({
-          produto: entry.pe.nome_produto,
-          quantidade: entry.quantidadeTotal,
-          comissao_unit: comGUnit,
-          comissao_total: comGTotal
-        });
-        totalEspecialGerentePosto += comGTotal;
+    // Itens especiais gerente (por qtd total do posto)
+    var itensEspGer = [];
+    var totalEspGer = 0;
+    for (var k in dados.espPosto) {
+      var entry = dados.espPosto[k];
+      var cGU   = Number(entry.pe.comissao_gerente);
+      if (cGU > 0) {
+        var cGT = entry.qtdTotal * cGU;
+        itensEspGer.push({ produto: entry.pe.nome_produto, quantidade: entry.qtdTotal, comissao_unit: cGU, comissao_total: cGT });
+        totalEspGer += cGT;
       }
     }
 
-    // Monta set de nomes que são gerentes (para excluir da pool de trocadores)
-    var nomesGer = Object.keys(dados.gerentes);
-    var nomesGerentesSet = {};
-    for (var gsi = 0; gsi < nomesGer.length; gsi++) {
-      nomesGerentesSet[nomesGer[gsi].trim().toLowerCase()] = true;
-    }
-
-    // ── FRENTISTAS ──────────────────────────────────────────────────────────────
-    var totalComissaoFrentistas = 0;
-    var totalComissaoTrocadores = 0; // apenas trocadores puros (não-gerentes)
-
-    var nomesFrent = Object.keys(dados.frentistas);
-    for (var fi2 = 0; fi2 < nomesFrent.length; fi2++) {
-      var nf = nomesFrent[fi2];
-
-      // Se este frentista também é gerente, NÃO entra como linha separada nem na pool
-      // (pode ocorrer quando importação salva vendas do gerente como 'frentista'
-      //  porque o nome da planilha não bateu com o cadastro em periodo_funcionarios)
-      if (nomesGerentesSet[nf.trim().toLowerCase()]) continue;
-
-      var ff = dados.frentistas[nf];
-      var pctF = metaFrentistaEfetiva > 0 ? ff.totalVendas / metaFrentistaEfetiva : 0;
-      var taxaF = getFaixaFrentista(pctF);
-      var comAgrF = ff.totalVendas * taxaF;
-      var comEspF = 0;
-      for (var ie = 0; ie < ff.itensEspeciaisProprios.length; ie++) {
-        comEspF += ff.itensEspeciaisProprios[ie].comissao_total;
-      }
-      var totF = comAgrF + comEspF;
-
-      var desqKeyF = postoId + '|' + nf.trim().toLowerCase() + '|frentista';
-      var desqMotivoF = desqIdx[desqKeyF];
-      var isDesqF = !!desqMotivoF;
+    // ── FRENTISTAS ──────────────────────────────────────────────────────────
+    var totalComFrent = 0;
+    var nomesFrent    = Object.keys(dados.frentistas);
+    for (var fi = 0; fi < nomesFrent.length; fi++) {
+      var nome = nomesFrent[fi];
+      var ff   = dados.frentistas[nome];
+      var pct  = mF > 0 ? ff.totalVendas / mF : 0;
+      var taxa = getFaixaFrentista(pct);
+      var cF   = ff.totalVendas * taxa;
+      var cEsp = 0;
+      for (var ii = 0; ii < ff.itensEsp.length; ii++) cEsp += ff.itensEsp[ii].comissao_total;
+      var tot  = cF + cEsp;
+      var dk   = sid + '|' + nome.trim().toLowerCase() + '|frentista';
+      var dm   = desqIdx[dk];
+      var isD  = !!dm;
 
       res.funcionarios.push({
-        nome: nf, tipo: 'frentista',
-        totalVendas: ff.totalVendas, metaEfetiva: metaFrentistaEfetiva,
-        pctMeta: pctF, taxaComissao: isDesqF ? 0 : taxaF,
-        comissaoAgregados: isDesqF ? 0 : comAgrF,
-        itensEspeciais: ff.itensEspeciaisProprios,
-        comissaoEspeciais: isDesqF ? 0 : comEspF,
-        totalComissao: isDesqF ? 0 : totF,
-        desqualificado: isDesqF,
-        motivoDesqualificacao: desqMotivoF || null,
+        nome: nome, tipo: 'frentista',
+        totalVendas: ff.totalVendas, metaEfetiva: mF, pctMeta: pct,
+        taxaComissao:      isD ? 0 : taxa,
+        comissaoAgregados: isD ? 0 : cF,
+        itensEspeciais:    ff.itensEsp,
+        comissaoEspeciais: isD ? 0 : cEsp,
+        totalComissao:     isD ? 0 : tot,
+        desqualificado: isD, motivoDesqualificacao: dm || null,
       });
-      res.totalComissoes += isDesqF ? 0 : totF;
-      if (!isDesqF) totalComissaoFrentistas += comAgrF;
+      res.totalComissoes += isD ? 0 : tot;
+      if (!isD) totalComFrent += cF;
     }
 
-    // ── TROCADORES PUROS (exclui quem também é gerente) ───────────────────────
-    var nomesTroc = Object.keys(dados.trocadores);
-    for (var ti2 = 0; ti2 < nomesTroc.length; ti2++) {
-      var nt = nomesTroc[ti2];
-
-      // Se este trocador também é gerente, NÃO entra como linha separada nem na pool
-      // (será tratado dentro do bloco de gerentes como acumulação própria)
-      if (nomesGerentesSet[nt.trim().toLowerCase()]) continue;
-
-      var ft = dados.trocadores[nt];
-      var pctT = metaTrocadorEfetiva > 0 ? ft.totalVendas / metaTrocadorEfetiva : 0;
-      var taxaT = getFaixaTrocador(pctT);
-      var comAgrT = ft.totalVendas * taxaT;
-      var comEspT = 0;
-      for (var ie2 = 0; ie2 < ft.itensEspeciaisProprios.length; ie2++) {
-        comEspT += ft.itensEspeciaisProprios[ie2].comissao_total;
-      }
-      var totT = comAgrT + comEspT;
-
-      var desqKeyT = postoId + '|' + nt.trim().toLowerCase() + '|trocador';
-      var desqMotivoT = desqIdx[desqKeyT];
-      var isDesqT = !!desqMotivoT;
+    // ── TROCADORES PUROS ────────────────────────────────────────────────────
+    var totalComTroc = 0;
+    var nomesTroc    = Object.keys(dados.trocadores);
+    for (var ti = 0; ti < nomesTroc.length; ti++) {
+      var nome = nomesTroc[ti];
+      var ft   = dados.trocadores[nome];
+      var pct  = mT > 0 ? ft.totalVendas / mT : 0;
+      var taxa = getFaixaTrocador(pct);
+      var cF   = ft.totalVendas * taxa;
+      var cEsp = 0;
+      for (var ii = 0; ii < ft.itensEsp.length; ii++) cEsp += ft.itensEsp[ii].comissao_total;
+      var tot  = cF + cEsp;
+      var dk   = sid + '|' + nome.trim().toLowerCase() + '|trocador';
+      var dm   = desqIdx[dk];
+      var isD  = !!dm;
 
       res.funcionarios.push({
-        nome: nt, tipo: 'trocador',
-        totalVendas: ft.totalVendas, metaEfetiva: metaTrocadorEfetiva,
-        pctMeta: pctT, taxaComissao: isDesqT ? 0 : taxaT,
-        comissaoAgregados: isDesqT ? 0 : comAgrT,
-        itensEspeciais: ft.itensEspeciaisProprios,
-        comissaoEspeciais: isDesqT ? 0 : comEspT,
-        totalComissao: isDesqT ? 0 : totT,
-        desqualificado: isDesqT,
-        motivoDesqualificacao: desqMotivoT || null,
+        nome: nome, tipo: 'trocador',
+        totalVendas: ft.totalVendas, metaEfetiva: mT, pctMeta: pct,
+        taxaComissao:      isD ? 0 : taxa,
+        comissaoAgregados: isD ? 0 : cF,
+        itensEspeciais:    ft.itensEsp,
+        comissaoEspeciais: isD ? 0 : cEsp,
+        totalComissao:     isD ? 0 : tot,
+        desqualificado: isD, motivoDesqualificacao: dm || null,
       });
-      res.totalComissoes += isDesqT ? 0 : totT;
-      // Entra na pool da comissão gerencial
-      if (!isDesqT) totalComissaoTrocadores += comAgrT;
+      res.totalComissoes += isD ? 0 : tot;
+      if (!isD) totalComTroc += cF;
     }
 
-    // ── GERENTES ────────────────────────────────────────────────────────────────
-    var pctPosto       = metaPostoEfetiva > 0 ? dados.totalPosto / metaPostoEfetiva : 0;
+    // ── GERENTES ────────────────────────────────────────────────────────────
     var gerenteAtingiu = pctPosto >= 1.0;
+    var nomesGer       = Object.keys(dados.gerentes);
 
-    for (var gi3 = 0; gi3 < nomesGer.length; gi3++) {
-      var ng = nomesGer[gi3];
-      var fg = dados.gerentes[ng];
+    for (var gi = 0; gi < nomesGer.length; gi++) {
+      var nome   = nomesGer[gi];
+      var fg     = dados.gerentes[nome];
+      var fnKey  = sid + '|' + nome.trim().toLowerCase();
+      var isTroc = !!tambemTrocSet[fnKey]; // gerente que também é trocador
+      var dk     = sid + '|' + nome.trim().toLowerCase() + '|gerente';
+      var dm     = desqIdx[dk];
+      var isD    = !!dm;
 
-      // Se o gerente tem vendas salvas como frentista no banco
-      // (ocorre quando nome da planilha não bateu na importação),
-      // mescla essas vendas em fg para que sejam contadas corretamente
-      if (dados.frentistas[ng]) {
-        fg.totalVendas += dados.frentistas[ng].totalVendas;
-        // Mescla itens especiais próprios também
-        for (var mfi = 0; mfi < dados.frentistas[ng].itensEspeciaisProprios.length; mfi++) {
-          fg.itensEspeciaisProprios.push(dados.frentistas[ng].itensEspeciaisProprios[mfi]);
-        }
-      }
+      // Comissão própria como trocador (se também é trocador)
+      var pctT       = 0;
+      var taxaT      = 0;
+      var comPropT   = 0;
+      var comEspT    = 0;
+      if (isTroc) {
+        // Caso A: vendas separadas no banco (tipo='trocador')
+        var vendasTrocCalc = fg.vendasTroc;
+        var itensEspTrocCalc = fg.itensEspTroc;
 
-      var desqKeyG = postoId + '|' + ng.trim().toLowerCase() + '|gerente';
-      var desqMotivoG = desqIdx[desqKeyG];
-      var isDesqG = !!desqMotivoG;
-
-      // 1) Soma das comissões por faixa dos subordinados (frentistas + trocadores PUROS)
-      var comissaoSubordinados = totalComissaoFrentistas + totalComissaoTrocadores;
-
-      // 2) 3% do total do posto (se meta atingida)
-      var comissaoPercentualPosto = gerenteAtingiu ? dados.totalPosto * 0.03 : 0;
-
-      // 3) Comissão especial gerente (por qtd total de cada produto especial no posto)
-      var comEspGerente = totalEspecialGerentePosto;
-
-      // Base gerencial = subordinados + %posto + especiais gerente
-      var comissaoGerencialBase = comissaoSubordinados + comissaoPercentualPosto + comEspGerente;
-
-      // ── Acumulação própria como trocador ─────────────────────────────────
-      // O gerente que também acumula trocador recebe comissão de trocador pelas suas vendas.
-      // CASO 1: importação separou vendas — dados.trocadores[ng] tem as vendas como trocador
-      // CASO 2: importação salvou tudo como 'gerente' (funcEspIdx prioriza gerente) —
-      //   neste caso usamos fg.totalVendas (todas as vendas do gerente) como base de trocador
-      //   desde que ele esteja em periodoFuncionarios como trocador (gerenteTrocadorIdx)
-      var vendaTroc   = dados.trocadores[ng] || null;
-      var gtIdxKey    = String(postoId) + '|' + ng.trim().toLowerCase();
-      var isAmbos     = !!gerenteTrocadorIdx[gtIdxKey];
-
-      var comTrocAcum = 0;
-      var itensTroc   = [];
-      var comEspTroc  = 0;
-      var taxaTrocAcum = 0;
-      var pctTrocAcum  = 0;
-      var vendasTroc   = 0;
-
-      if (vendaTroc) {
-        // Caso 1: tem vendas separadas como trocador
-        pctTrocAcum  = metaTrocadorEfetiva > 0 ? vendaTroc.totalVendas / metaTrocadorEfetiva : 0;
-        taxaTrocAcum = getFaixaTrocador(pctTrocAcum);
-        comTrocAcum  = vendaTroc.totalVendas * taxaTrocAcum;
-        itensTroc    = vendaTroc.itensEspeciaisProprios;
-        vendasTroc   = vendaTroc.totalVendas;
-        for (var ie3 = 0; ie3 < itensTroc.length; ie3++) {
-          comEspTroc += itensTroc[ie3].comissao_total;
-        }
-      } else if (isAmbos && fg.totalVendas > 0) {
-        // Caso 2: importação salvou tudo como 'gerente', mas ele é ambos —
-        // aplica comissão de trocador sobre TODAS as suas vendas próprias.
-        // Os itensEspeciaisProprios foram calculados com comissao_gerente na importação,
-        // então recalculamos aqui usando comissao_trocador do produto especial.
-        pctTrocAcum  = metaTrocadorEfetiva > 0 ? fg.totalVendas / metaTrocadorEfetiva : 0;
-        taxaTrocAcum = getFaixaTrocador(pctTrocAcum);
-        comTrocAcum  = fg.totalVendas * taxaTrocAcum;
-        vendasTroc   = fg.totalVendas;
-
-        // Recalcula itens especiais com taxa de trocador (não de gerente)
-        var itensGer = fg.itensEspeciaisProprios || [];
-        itensTroc = [];
-        for (var ie3b = 0; ie3b < itensGer.length; ie3b++) {
-          var igItem   = itensGer[ie3b];
-          var peKeyTroc = String(postoId) + '|' + igItem.produto.trim().toLowerCase();
-          var peTroc    = especiaisIdx[peKeyTroc];
-          var comTrocUnit = peTroc ? Number(peTroc.comissao_trocador) : igItem.comissao_unit;
-          var comTrocTotal = igItem.quantidade * comTrocUnit;
-          if (comTrocUnit > 0) {
-            itensTroc.push({
-              produto: igItem.produto,
-              quantidade: igItem.quantidade,
-              comissao_unit: comTrocUnit,
-              comissao_total: comTrocTotal
-            });
-            comEspTroc += comTrocTotal;
+        // Caso B: tudo importado como 'gerente' (tipo='gerente' no banco)
+        // Quando tambemTrocador, as vendas vieram como gerente mas devem ser calculadas
+        // como trocador pois é o cargo acumulado
+        if (vendasTrocCalc === 0 && fg.vendasFrent > 0) {
+          vendasTrocCalc   = fg.vendasFrent;
+          // Itens especiais precisam ser recalculados com comissao_trocador
+          itensEspTrocCalc = [];
+          for (var ii = 0; ii < fg.itensEspFrent.length; ii++) {
+            var ig   = fg.itensEspFrent[ii];
+            var peK  = sid + '|' + ig.produto.trim().toLowerCase();
+            var peEn = espIdx[peK];
+            var cTU  = peEn ? Number(peEn.comissao_trocador) : 0;
+            if (cTU > 0) {
+              itensEspTrocCalc.push({ produto: ig.produto, quantidade: ig.quantidade, comissao_unit: cTU, comissao_total: ig.quantidade * cTU });
+            }
           }
+          // Limpa vendasFrent pois serão contadas como trocador
+          fg.vendasFrent = 0;
+          fg.itensEspFrent = [];
         }
+
+        pctT     = mT > 0 ? vendasTrocCalc / mT : 0;
+        taxaT    = getFaixaTrocador(pctT);
+        comPropT = vendasTrocCalc * taxaT;
+        fg.vendasTroc    = vendasTrocCalc;
+        fg.itensEspTroc  = itensEspTrocCalc;
+        for (var ii = 0; ii < itensEspTrocCalc.length; ii++) comEspT += itensEspTrocCalc[ii].comissao_total;
       }
 
-      // acumulaTrocador é true se tem vendas como trocador OU se é cadastrado como ambos
-      var acumulaTrocador = !!(vendaTroc || isAmbos);
+      // Comissão própria como frentista (vendas que não são de trocador)
+      var pctF       = mF > 0 ? fg.vendasFrent / mF : 0;
+      var taxaF      = getFaixaFrentista(pctF);
+      var comPropF   = fg.vendasFrent * taxaF;
+      var comEspF    = 0;
+      for (var ii = 0; ii < fg.itensEspFrent.length; ii++) comEspF += fg.itensEspFrent[ii].comissao_total;
 
-      var totTroc = isDesqG ? 0 : (comTrocAcum + comEspTroc);
-      var totGer  = isDesqG ? 0 : (comissaoGerencialBase + totTroc);
+      // 3% posto (se meta atingida) + especiais gerente + próprias
+      // NÃO soma comissões dos subordinados
+      var com3P      = gerenteAtingiu ? dados.totalPosto * 0.03 : 0;
+      var comEspGer  = isD ? 0 : totalEspGer;
+      var comBase    = com3P + comEspGer;
+
+      var totPropF   = isD ? 0 : (comPropF + comEspF);
+      var totPropT   = isD ? 0 : (comPropT + comEspT);
+      var totGer     = isD ? 0 : (comBase + totPropF + totPropT);
 
       res.funcionarios.push({
-        nome: ng, tipo: 'gerente',
-        totalVendas: dados.totalPosto,
-        vendasProprias: fg.totalVendas,
-        vendasComoTrocador: vendasTroc,
-        metaEfetiva: metaPostoEfetiva,
-        pctMeta: pctPosto,
-        taxaComissao: gerenteAtingiu ? 0.03 : 0,
+        nome: nome, tipo: 'gerente',
+        totalVendas:        dados.totalPosto,
+        vendasPropFrentista: fg.vendasFrent,
+        vendasPropTrocador:  fg.vendasTroc,
+        metaEfetiva:        mP,
+        pctMeta:            pctPosto,
+        taxaComissao:       gerenteAtingiu ? 0.03 : 0,
 
-        comissaoSubordinados: isDesqG ? 0 : comissaoSubordinados,
-        comissaoFrentistasBase: isDesqG ? 0 : totalComissaoFrentistas,
-        comissaoTrocadoresBase: isDesqG ? 0 : totalComissaoTrocadores,
-        comissaoPercentualPosto: isDesqG ? 0 : comissaoPercentualPosto,
+        // Próprio como frentista
+        pctMetaFrentista:    pctF,
+        taxaFrentista:       isD ? 0 : taxaF,
+        comissaoPropFrent:   isD ? 0 : comPropF,
+        itensEspFrentista:   fg.itensEspFrent,
+        comissaoEspFrent:    isD ? 0 : comEspF,
+        totalPropFrentista:  totPropF,
 
-        comissaoAgregados: isDesqG ? 0 : comissaoGerencialBase,
-        itensEspeciais: itensEspeciaisGerentePosto,
-        comissaoEspeciais: isDesqG ? 0 : comEspGerente,
-        totalComissaoGerencial: isDesqG ? 0 : comissaoGerencialBase,
+        // Próprio como trocador (só se tambemTroc)
+        tambemTrocador:      isTroc,
+        pctMetaTrocador:     pctT,
+        taxaTrocador:        isD ? 0 : taxaT,
+        comissaoPropTroc:    isD ? 0 : comPropT,
+        itensEspTrocador:    fg.itensEspTroc,
+        comissaoEspTroc:     isD ? 0 : comEspT,
+        totalPropTrocador:   totPropT,
 
-        acumulaTrocador: acumulaTrocador,
-        pctTrocadorAcumulado: pctTrocAcum,
-        taxaTrocadorAcumulada: taxaTrocAcum,
-        comissaoTrocadorAcumulada: isDesqG ? 0 : comTrocAcum,
-        itensEspeciaisTrocador: itensTroc,
-        comissaoEspeciaisTrocador: isDesqG ? 0 : comEspTroc,
-        totalComissaoTrocador: totTroc,
+        // Gerencial
+        comissaoPercentualPosto: isD ? 0 : com3P,
+        comissaoAgregados:       isD ? 0 : comBase,
+        itensEspeciais:          itensEspGer,
+        comissaoEspeciais:       comEspGer,
+        totalComissaoGerencial:  isD ? 0 : comBase,
 
-        totalComissao: totGer,
-        metaAtingida: gerenteAtingiu,
-        semVendas: fg.totalVendas === 0 && !vendaTroc,
+        totalComissao:  totGer,
+        metaAtingida:   gerenteAtingiu,
+        semVendas:      fg.vendasFrent === 0 && fg.vendasTroc === 0,
 
-        desqualificado: isDesqG,
-        motivoDesqualificacao: desqMotivoG || null,
+        desqualificado:        isD,
+        motivoDesqualificacao: dm || null,
+
+        // Campos de compatibilidade com frontend existente
+        acumulaTrocador:           isTroc,
+        comissaoTrocadorAcumulada: isD ? 0 : comPropT,
+        itensEspeciaisTrocador:    fg.itensEspTroc,
+        comissaoEspeciaisTrocador: isD ? 0 : comEspT,
+        totalComissaoTrocador:     totPropT,
+        pctTrocadorAcumulado:      pctT,
+        taxaTrocadorAcumulada:     taxaT,
       });
       res.totalComissoes += totGer;
     }
-
-    res.pctMetaPosto = pctPosto;
   }
 
   return resultado;
 }
 
-module.exports = { calcularComissoes: calcularComissoes, getFaixaFrentista: getFaixaFrentista, getFaixaTrocador: getFaixaTrocador, calcularProRata: calcularProRata };
+module.exports = { calcularComissoes, getFaixaFrentista, getFaixaTrocador, calcularProRata };
