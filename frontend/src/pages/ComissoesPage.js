@@ -2,8 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useSearchParams } from 'react-router-dom';
 import { API } from '../contexts/AuthContext';
-import { fmt, fmtPct, faixaLabel } from '../utils/fmt';
+import { fmt, fmtPct, faixaLabel, fmtQ } from '../utils/fmt';
 import { Spinner, FaixaInfo } from '../components/ui';
+
+// Conversão segura de string/number do banco para Number
+const toN = (v) => (v == null ? 0 : Number(v) || 0);
 
 export default function ComissoesPage() {
   const [searchParams] = useSearchParams();
@@ -45,13 +48,14 @@ export default function ComissoesPage() {
 
   const postoIds = comissoes ? Object.keys(comissoes) : [];
 
-  const totalGeral         = postoIds.reduce((s, pid) => s + (comissoes[pid]?.totalComissoes || 0), 0);
+  // FIX: toN() garante conversão segura de string → number em todos os reduces
+  const totalGeral         = postoIds.reduce((s, pid) => s + toN(comissoes[pid]?.totalComissoes), 0);
   const totalFrentComissao = postoIds.reduce((s, pid) =>
-    s + comissoes[pid].funcionarios.filter(f => f.tipo === 'frentista').reduce((ss, f) => ss + f.totalComissao, 0), 0);
+    s + comissoes[pid].funcionarios.filter(f => f.tipo === 'frentista').reduce((ss, f) => ss + toN(f.totalComissao), 0), 0);
   const totalTrocComissao  = postoIds.reduce((s, pid) =>
-    s + comissoes[pid].funcionarios.filter(f => f.tipo === 'trocador').reduce((ss, f) => ss + f.totalComissao, 0), 0);
+    s + comissoes[pid].funcionarios.filter(f => f.tipo === 'trocador').reduce((ss, f) => ss + toN(f.totalComissao), 0), 0);
   const totalGerComissao   = postoIds.reduce((s, pid) =>
-    s + comissoes[pid].funcionarios.filter(f => f.tipo === 'gerente').reduce((ss, f) => ss + f.totalComissao, 0), 0);
+    s + comissoes[pid].funcionarios.filter(f => f.tipo === 'gerente').reduce((ss, f) => ss + toN(f.totalComissao), 0), 0);
 
   const tipoLabel = { frentista: 'Frentista', trocador: 'Trocador', gerente: 'Gerente' };
   const tipoColor = { frentista: 'badge-gray', trocador: 'badge-amber', gerente: 'badge-blue' };
@@ -77,7 +81,7 @@ export default function ComissoesPage() {
             )}
             {proRataInfo?.ativo && (
               <span style={{ marginLeft: 8, color: 'var(--amber)' }}>
-                · Pro rata: {proRataInfo.corridos}/{proRataInfo.totais} dias ({(proRataInfo.fator * 100).toFixed(1)}%)
+                · Pro rata: {proRataInfo.corridos}/{proRataInfo.totais} dias ({(toN(proRataInfo.fator) * 100).toFixed(1)}%)
               </span>
             )}
           </div>
@@ -150,9 +154,7 @@ export default function ComissoesPage() {
 
             const gerentes    = funcs.filter(f => f.tipo === 'gerente');
             const naoGerentes = funcs.filter(f => f.tipo !== 'gerente');
-
-            // FIX 2: count desqualificados in this posto
-            const totalDesq = d.funcionarios.filter(f => f.desqualificado).length;
+            const totalDesq   = d.funcionarios.filter(f => f.desqualificado).length;
 
             return (
               <div key={pid} className="card mb-4" style={{ marginBottom: 12 }}>
@@ -166,7 +168,6 @@ export default function ComissoesPage() {
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 14 }}>
                         {posto?.nome || ''}
-                        {/* FIX 2: show desq count */}
                         {totalDesq > 0 && (
                           <span className="badge badge-red" style={{ marginLeft: 8, fontSize: 10 }}>
                             {totalDesq} desqualificado{totalDesq > 1 ? 's' : ''}
@@ -180,7 +181,7 @@ export default function ComissoesPage() {
                         Total posto: <strong>{fmt(d.totalVendasPosto)}</strong>
                         {d.proRata && (
                           <span style={{ color: 'var(--amber)', marginLeft: 6 }}>
-                            · Meta posto efetiva: {fmt(d.metaPostoEfetiva)} ({(d.pctMetaPosto * 100).toFixed(1)}%)
+                            · Meta posto efetiva: {fmt(d.metaPostoEfetiva)} ({(toN(d.pctMetaPosto) * 100).toFixed(1)}%)
                           </span>
                         )}
                       </div>
@@ -191,10 +192,10 @@ export default function ComissoesPage() {
                       <div style={{ color: 'var(--text-muted)' }}>
                         Meta posto:{' '}
                         <span style={{
-                          color: d.pctMetaPosto >= 1 ? 'var(--green)' : d.pctMetaPosto >= 0.75 ? 'var(--amber)' : 'var(--red)',
+                          color: toN(d.pctMetaPosto) >= 1 ? 'var(--green)' : toN(d.pctMetaPosto) >= 0.75 ? 'var(--amber)' : 'var(--red)',
                           fontWeight: 600
                         }}>
-                          {(d.pctMetaPosto * 100).toFixed(1)}%
+                          {(toN(d.pctMetaPosto) * 100).toFixed(1)}%
                         </span>
                         {d.proRata && <span style={{ color: 'var(--amber)', marginLeft: 4 }}>(pro rata)</span>}
                       </div>
@@ -206,7 +207,7 @@ export default function ComissoesPage() {
                 {/* Faixas ativas */}
                 {isOpen && (
                   <div style={{ padding: '10px 20px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)', fontSize: 11, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                    {(tipoFiltro === 'todos' || tipoFiltro === 'frentista') && d.metaFrentistaEfetiva > 0 && (
+                    {(tipoFiltro === 'todos' || tipoFiltro === 'frentista') && toN(d.metaFrentistaEfetiva) > 0 && (
                       <div>
                         <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>
                           Frentistas — meta efetiva: <strong style={{ color: 'var(--text)' }}>{fmt(d.metaFrentistaEfetiva)}</strong>
@@ -215,7 +216,7 @@ export default function ComissoesPage() {
                         <FaixaInfo tipo="frentista" />
                       </div>
                     )}
-                    {(tipoFiltro === 'todos' || tipoFiltro === 'trocador') && d.metaTrocadorEfetiva > 0 && (
+                    {(tipoFiltro === 'todos' || tipoFiltro === 'trocador') && toN(d.metaTrocadorEfetiva) > 0 && (
                       <div>
                         <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>
                           Trocadores — meta efetiva: <strong style={{ color: 'var(--text)' }}>{fmt(d.metaTrocadorEfetiva)}</strong>
@@ -254,14 +255,13 @@ export default function ComissoesPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {naoGerentes.sort((a, b) => b.totalComissao - a.totalComissao).map((f, i) => {
+                        {naoGerentes.sort((a, b) => toN(b.totalComissao) - toN(a.totalComissao)).map((f, i) => {
                           const fx = faixaLabel(f.pctMeta, f.tipo);
                           return (
                             <React.Fragment key={i}>
                               <tr style={f.desqualificado ? { background: 'rgba(239,68,68,0.05)', opacity: 0.8 } : {}}>
                                 <td style={{ fontWeight: 500, fontSize: 13 }}>
                                   {f.nome}
-                                  {/* FIX 2: desq badge */}
                                   {f.desqualificado && (
                                     <span className="badge badge-red" style={{ marginLeft: 6, fontSize: 10 }}>
                                       Desqualificado
@@ -271,23 +271,22 @@ export default function ComissoesPage() {
                                 <td><span className={`badge ${tipoColor[f.tipo]}`}>{tipoLabel[f.tipo]}</span></td>
                                 <td className="text-right mono">{fmt(f.totalVendas)}</td>
                                 <td className="text-right mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  {f.metaEfetiva > 0 ? fmt(f.metaEfetiva) : '—'}
+                                  {toN(f.metaEfetiva) > 0 ? fmt(f.metaEfetiva) : '—'}
                                 </td>
                                 <td className="text-right">
-                                  <span className={`badge ${fx.color}`}>{(f.pctMeta * 100).toFixed(1)}%</span>
+                                  <span className={`badge ${fx.color}`}>{(toN(f.pctMeta) * 100).toFixed(1)}%</span>
                                 </td>
                                 <td className="text-right mono">
-                                  {f.desqualificado ? <span className="muted">0%</span> : `${(f.taxaComissao * 100).toFixed(1)}%`}
+                                  {f.desqualificado ? <span className="muted">0%</span> : `${(toN(f.taxaComissao) * 100).toFixed(1)}%`}
                                 </td>
                                 <td className="text-right mono">{fmt(f.comissaoAgregados)}</td>
                                 <td className="text-right mono">
-                                  {f.comissaoEspeciais > 0 ? fmt(f.comissaoEspeciais) : <span className="muted">—</span>}
+                                  {toN(f.comissaoEspeciais) > 0 ? fmt(f.comissaoEspeciais) : <span className="muted">—</span>}
                                 </td>
                                 <td className="text-right mono bold" style={{ color: f.desqualificado ? 'var(--red)' : 'var(--green)' }}>
                                   {fmt(f.totalComissao)}
                                 </td>
                               </tr>
-                              {/* FIX 2: show motivo row */}
                               {f.desqualificado && f.motivoDesqualificacao && (
                                 <tr style={{ background: 'rgba(239,68,68,0.04)' }}>
                                   <td colSpan={9} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--red)', fontStyle: 'italic' }}>
@@ -295,11 +294,11 @@ export default function ComissoesPage() {
                                   </td>
                                 </tr>
                               )}
-                              {/* Itens especiais (only shown if not desq) */}
+                              {/* FIX: fmtQ converte '2.000' → '2', '1.300' → '1,3' */}
                               {!f.desqualificado && f.itensEspeciais?.map((ie, j) => (
                                 <tr key={`ie-${j}`} style={{ background: 'rgba(245,158,11,0.04)' }}>
                                   <td colSpan={2} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--amber)' }}>★ {ie.produto}</td>
-                                  <td className="text-right mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>×{ie.quantidade}</td>
+                                  <td className="text-right mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>×{fmtQ(ie.quantidade)}</td>
                                   <td colSpan={4} />
                                   <td className="text-right mono" style={{ fontSize: 11, color: 'var(--amber)' }}>{fmt(ie.comissao_unit)}/un</td>
                                   <td className="text-right mono" style={{ fontSize: 11, color: 'var(--amber)' }}>{fmt(ie.comissao_total)}</td>
@@ -312,10 +311,10 @@ export default function ComissoesPage() {
                       <tfoot>
                         <tr>
                           <td colSpan={6} style={{ paddingLeft: 16 }}>Subtotal frentistas/trocadores</td>
-                          <td className="text-right mono">{fmt(naoGerentes.reduce((s, f) => s + f.comissaoAgregados, 0))}</td>
-                          <td className="text-right mono">{fmt(naoGerentes.reduce((s, f) => s + f.comissaoEspeciais, 0))}</td>
+                          <td className="text-right mono">{fmt(naoGerentes.reduce((s, f) => s + toN(f.comissaoAgregados), 0))}</td>
+                          <td className="text-right mono">{fmt(naoGerentes.reduce((s, f) => s + toN(f.comissaoEspeciais), 0))}</td>
                           <td className="text-right mono" style={{ color: 'var(--green)' }}>
-                            {fmt(naoGerentes.reduce((s, f) => s + f.totalComissao, 0))}
+                            {fmt(naoGerentes.reduce((s, f) => s + toN(f.totalComissao), 0))}
                           </td>
                         </tr>
                       </tfoot>
@@ -355,50 +354,36 @@ export default function ComissoesPage() {
                                   {f.acumulaTrocador && !f.desqualificado && (
                                     <span className="badge badge-amber" style={{ marginLeft: 6, fontSize: 10 }}>+ trocador</span>
                                   )}
-                                  {/* FIX 2 */}
                                   {f.desqualificado && (
                                     <span className="badge badge-red" style={{ marginLeft: 6, fontSize: 10 }}>Desqualificado</span>
                                   )}
                                 </td>
-
-                                {/* Comissão própria como frentista */}
                                 <td className="text-right mono" style={{ fontSize: 12 }}>
-                                  {(f.totalPropFrentista > 0 && !f.desqualificado)
+                                  {(toN(f.totalPropFrentista) > 0 && !f.desqualificado)
                                     ? <span style={{ color: 'var(--text-dim)' }}>{fmt(f.totalPropFrentista)}</span>
                                     : <span className="muted">—</span>}
                                 </td>
-
-                                {/* Comissão própria como trocador (só se tambemTrocador) */}
                                 <td className="text-right mono" style={{ fontSize: 12, color: 'var(--amber)' }}>
-                                  {(f.tambemTrocador && f.totalPropTrocador > 0 && !f.desqualificado)
+                                  {(f.tambemTrocador && toN(f.totalPropTrocador) > 0 && !f.desqualificado)
                                     ? fmt(f.totalPropTrocador)
                                     : <span className="muted">—</span>}
                                 </td>
-
-                                {/* 3% posto */}
                                 <td className="text-right mono" style={{ fontSize: 12 }}>
                                   {f.metaAtingida
                                     ? <span style={{ color: 'var(--green)' }}>{fmt(f.comissaoPercentualPosto)}</span>
                                     : <span className="muted">— (meta não atingida)</span>}
                                 </td>
-
-                                {/* com. especial gerente */}
                                 <td className="text-right mono">
-                                  {f.comissaoEspeciais > 0 ? fmt(f.comissaoEspeciais) : <span className="muted">—</span>}
+                                  {toN(f.comissaoEspeciais) > 0 ? fmt(f.comissaoEspeciais) : <span className="muted">—</span>}
                                 </td>
-
-                                {/* % meta posto */}
                                 <td className="text-right">
-                                  <span className={`badge ${fxPosto.color}`}>{(f.pctMeta * 100).toFixed(1)}%</span>
+                                  <span className={`badge ${fxPosto.color}`}>{(toN(f.pctMeta) * 100).toFixed(1)}%</span>
                                 </td>
-
-                                {/* Total */}
                                 <td className="text-right mono bold" style={{ color: f.desqualificado ? 'var(--red)' : 'var(--green)' }}>
                                   {fmt(f.totalComissao)}
                                 </td>
                               </tr>
 
-                              {/* FIX 2: motivo desq */}
                               {f.desqualificado && f.motivoDesqualificacao && (
                                 <tr style={{ background: 'rgba(239,68,68,0.04)' }}>
                                   <td colSpan={8} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--red)', fontStyle: 'italic' }}>
@@ -407,24 +392,23 @@ export default function ComissoesPage() {
                                 </tr>
                               )}
 
-                              {/* breakdown row */}
                               {!f.desqualificado && (
                                 <tr style={{ background: 'rgba(79,110,247,0.03)' }}>
                                   <td colSpan={8} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--text-muted)' }}>
-                                    {f.totalPropFrentista > 0 && `Próprio frent. ${fmt(f.totalPropFrentista)}`}
-                                    {f.tambemTrocador && f.totalPropTrocador > 0 && ` + próprio troc. ${fmt(f.totalPropTrocador)}`}
+                                    {toN(f.totalPropFrentista) > 0 && `Próprio frent. ${fmt(f.totalPropFrentista)}`}
+                                    {f.tambemTrocador && toN(f.totalPropTrocador) > 0 && ` + próprio troc. ${fmt(f.totalPropTrocador)}`}
                                     {f.metaAtingida ? ` + 3% posto ${fmt(f.comissaoPercentualPosto)}` : ' (meta não atingida)'}
-                                    {f.comissaoEspeciais > 0 && ` + esp.gerente ${fmt(f.comissaoEspeciais)}`}
+                                    {toN(f.comissaoEspeciais) > 0 && ` + esp.gerente ${fmt(f.comissaoEspeciais)}`}
                                     {' = '}<strong style={{ color: 'var(--accent)' }}>{fmt(f.totalComissao)}</strong>
                                   </td>
                                 </tr>
                               )}
 
-                              {/* Itens especiais gerente */}
+                              {/* FIX: fmtQ nos itens especiais do gerente */}
                               {!f.desqualificado && f.itensEspeciais?.map((ie, j) => (
                                 <tr key={`ieg-${j}`} style={{ background: 'rgba(79,110,247,0.04)' }}>
                                   <td colSpan={3} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--accent)' }}>
-                                    ★ {ie.produto} (gerente — {ie.quantidade} un no posto)
+                                    ★ {ie.produto} (gerente — {fmtQ(ie.quantidade)} un no posto)
                                   </td>
                                   <td colSpan={2} />
                                   <td colSpan={1} />
@@ -435,7 +419,7 @@ export default function ComissoesPage() {
                                 </tr>
                               ))}
 
-                              {/* Itens especiais trocador acum */}
+                              {/* FIX: fmtQ nos itens especiais do trocador acumulado */}
                               {!f.desqualificado && f.acumulaTrocador && f.itensEspeciaisTrocador?.map((ie, j) => (
                                 <tr key={`iet-${j}`} style={{ background: 'rgba(245,158,11,0.04)' }}>
                                   <td colSpan={3} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--amber)' }}>
@@ -443,7 +427,7 @@ export default function ComissoesPage() {
                                   </td>
                                   <td colSpan={3} />
                                   <td className="text-right mono" style={{ fontSize: 11, color: 'var(--amber)' }}>
-                                    ×{ie.quantidade} × {fmt(ie.comissao_unit)} = {fmt(ie.comissao_total)}
+                                    ×{fmtQ(ie.quantidade)} × {fmt(ie.comissao_unit)} = {fmt(ie.comissao_total)}
                                   </td>
                                   <td />
                                 </tr>
@@ -455,11 +439,11 @@ export default function ComissoesPage() {
                       <tfoot>
                         <tr>
                           <td colSpan={4} style={{ paddingLeft: 16 }}>Subtotal gerentes</td>
-                          <td className="text-right mono">{fmt(gerentes.reduce((s, f) => s + (f.comissaoPercentualPosto || 0), 0))}</td>
-                          <td className="text-right mono">{fmt(gerentes.reduce((s, f) => s + (f.comissaoEspeciais || 0), 0))}</td>
+                          <td className="text-right mono">{fmt(gerentes.reduce((s, f) => s + toN(f.comissaoPercentualPosto), 0))}</td>
+                          <td className="text-right mono">{fmt(gerentes.reduce((s, f) => s + toN(f.comissaoEspeciais), 0))}</td>
                           <td />
                           <td className="text-right mono" style={{ color: 'var(--green)' }}>
-                            {fmt(gerentes.reduce((s, f) => s + f.totalComissao, 0))}
+                            {fmt(gerentes.reduce((s, f) => s + toN(f.totalComissao), 0))}
                           </td>
                         </tr>
                       </tfoot>
@@ -474,7 +458,7 @@ export default function ComissoesPage() {
                       Total {posto?.codigo}
                     </span>
                     <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--green)', fontFamily: 'var(--mono)' }}>
-                      {fmt(funcs.reduce((s, f) => s + f.totalComissao, 0))}
+                      {fmt(funcs.reduce((s, f) => s + toN(f.totalComissao), 0))}
                     </span>
                   </div>
                 )}
@@ -493,7 +477,7 @@ export default function ComissoesPage() {
                 </span>
                 {proRataInfo?.ativo && (
                   <span style={{ marginLeft: 12, fontSize: 12, color: 'var(--amber)', background: 'var(--amber-bg)', padding: '2px 8px', borderRadius: 4 }}>
-                    ⚡ Valor parcial — {proRataInfo.corridos}/{proRataInfo.totais} dias ({(proRataInfo.fator * 100).toFixed(1)}% do período)
+                    ⚡ Valor parcial — {proRataInfo.corridos}/{proRataInfo.totais} dias ({(toN(proRataInfo.fator) * 100).toFixed(1)}% do período)
                   </span>
                 )}
               </div>

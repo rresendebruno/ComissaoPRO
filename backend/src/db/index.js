@@ -95,9 +95,33 @@ async function migrate() {
     ALTER TABLE metas ADD COLUMN IF NOT EXISTS meta_posto NUMERIC(15,2) NOT NULL DEFAULT 0;
   `);
 
-  // Migração da constraint de periodo_funcionarios:
-  // A constraint antiga era UNIQUE(periodo_id, posto_id, nome) — impedia cadastrar o mesmo
-  // funcionário como gerente E trocador. A nova inclui o tipo para permitir ambos.
+  // ── Migração: whatsapp_group_id em postos ──────────────────────────────────
+  await query(`
+    ALTER TABLE postos ADD COLUMN IF NOT EXISTS whatsapp_group_id VARCHAR(100) DEFAULT NULL;
+  `);
+
+  // ── Migração: data_ultima_importacao em periodos ───────────────────────────
+  await query(`
+    ALTER TABLE periodos ADD COLUMN IF NOT EXISTS data_ultima_importacao TIMESTAMPTZ;
+  `);
+
+  // ── Tabela desqualificados ─────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS periodo_desqualificados (
+      id          SERIAL PRIMARY KEY,
+      periodo_id  INTEGER REFERENCES periodos(id) ON DELETE CASCADE,
+      posto_id    INTEGER NOT NULL,
+      posto_codigo VARCHAR(20) NOT NULL,
+      nome        VARCHAR(255) NOT NULL,
+      tipo        VARCHAR(20)  NOT NULL CHECK (tipo IN ('frentista','trocador','gerente')),
+      motivo      TEXT DEFAULT '',
+      created_at  TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(periodo_id, posto_id, nome, tipo)
+    );
+    CREATE INDEX IF NOT EXISTS idx_desq_periodo ON periodo_desqualificados(periodo_id);
+  `);
+
+  // ── Migração constraint periodo_funcionarios ──────────────────────────────
   await query(`
     DO $migration$
     BEGIN

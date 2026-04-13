@@ -24,6 +24,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-comissoes}:${POSTGRES_PASSWORD:-comissoes123}@postgres:5432/${POSTGRES_DB:-comissoes}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-2026}

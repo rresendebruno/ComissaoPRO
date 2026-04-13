@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { API } from '../contexts/AuthContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Modal, ConfirmModal, Spinner } from '../components/ui';
-import { fmt } from '../utils/fmt';
+import { fmt, fmtQ } from '../utils/fmt';
 
 export default function PeriodoDetailPage() {
   const { id } = useParams();
@@ -53,9 +53,9 @@ export default function PeriodoDetailPage() {
   const [deleteFunc, setDeleteFunc] = useState(null);
   const [funcError, setFuncError] = useState('');
 
-  // FIX 2: Desqualificados via API
+  // Desqualificados
   const [todosFuncionarios, setTodosFuncionarios] = useState([]);
-  const [desqualificados, setDesqualificados] = useState([]); // array of DB records
+  const [desqualificados, setDesqualificados] = useState([]);
   const [loadingDesq, setLoadingDesq] = useState(false);
   const [filterDesqPosto, setFilterDesqPosto] = useState('');
   const [motivoModal, setMotivoModal] = useState(null);
@@ -102,7 +102,6 @@ export default function PeriodoDetailPage() {
       });
   }, [postos]);
 
-  // FIX 2: load from API — tolerante a falha na tabela desqualificados
   const loadTodosFuncionarios = useCallback(() => {
     setLoadingDesq(true);
     axios.get(`${API}/periodos/${id}/todos-funcionarios`)
@@ -182,7 +181,7 @@ export default function PeriodoDetailPage() {
     setDeleteFunc(null); load();
   };
 
-  // ── FIX 2: Desqualificados via API
+  // ── Desqualificados
   const isDesqualificado = (f) =>
     desqualificados.some(d =>
       d.posto_id === f.posto_id &&
@@ -508,7 +507,6 @@ export default function PeriodoDetailPage() {
                   <option value="">Todos os postos</option>
                   {postos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.nome}</option>)}
                 </select>
-                {/* FIX 1: placeholder updated to reflect produto search too */}
                 <input
                   placeholder="🔍 Funcionário ou produto…"
                   value={filterFunc}
@@ -545,7 +543,8 @@ export default function PeriodoDetailPage() {
                           {v.produto}
                           {especial && <span className="badge badge-amber" style={{ marginLeft: 6, fontSize: 10 }}>especial</span>}
                         </td>
-                        <td className="text-right mono">{v.quantidade}</td>
+                        {/* FIX: fmtQ converte '2.000' → '2', '39.900' → '39,9' */}
+                        <td className="text-right mono">{fmtQ(v.quantidade)}</td>
                         <td className="text-right mono bold">{fmt(v.valor_final)}</td>
                         {isAdmin && (
                           <td>
@@ -771,7 +770,6 @@ export default function PeriodoDetailPage() {
         />
       )}
 
-      {/* Modal motivo desqualificação */}
       {motivoModal && (
         <Modal title={`Desqualificar: ${motivoModal.nome}`} onClose={() => setMotivoModal(null)}>
           <div className="modal-body">
@@ -796,7 +794,6 @@ export default function PeriodoDetailPage() {
         </Modal>
       )}
 
-      {/* Modal tornar produto especial */}
       {showProdModal && prodVenda && (
         <Modal title="Tornar Produto Especial" onClose={() => setShowProdModal(false)}>
           <div className="modal-body">

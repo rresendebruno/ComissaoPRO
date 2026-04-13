@@ -2,9 +2,12 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { API } from '../contexts/AuthContext';
-import { fmt, fmtPct, statusMeta } from '../utils/fmt';
+import { fmt, fmtPct, statusMeta, somaSegura } from '../utils/fmt';
 import { Spinner } from '../components/ui';
 import { useNavigate } from 'react-router-dom';
+
+// Converte qualquer valor para Number com segurança
+const toN = (v) => (v == null ? 0 : Number(v) || 0);
 
 export default function DashboardPage() {
   const [periodos, setPeriodos] = useState([]);
@@ -35,21 +38,26 @@ export default function DashboardPage() {
 
   const chartData = postoIds.map(pid => {
     const d = comissoes[pid];
-    const meta = d.metaFrentista || 0;
-    const totalFrent = d.funcionarios.filter(f => f.tipo === 'frentista').reduce((s, f) => s + f.totalVendas, 0);
+    const meta = toN(d.metaFrentista) || 0;
+    // FIX: somaSegura garante que totalVendas (pode vir como string) seja convertido
+    const totalFrent = somaSegura(
+      d.funcionarios.filter(f => f.tipo === 'frentista'),
+      f => f.totalVendas
+    );
     return {
       posto: `P${pid}`,
       realizado: totalFrent,
       meta,
       pct: meta > 0 ? totalFrent / meta : 0,
-      totalComissoes: d.totalComissoes
+      totalComissoes: toN(d.totalComissoes),
     };
   }).sort((a, b) => a.posto.localeCompare(b.posto));
 
-  const totalRealizado = chartData.reduce((s, d) => s + d.realizado, 0);
-  const totalMeta = chartData.reduce((s, d) => s + d.meta, 0);
-  const totalComissoes = chartData.reduce((s, d) => s + d.totalComissoes, 0);
-  const postosAcima = chartData.filter(d => d.pct >= 1).length;
+  // FIX: todos os totalizadores usam toN() para evitar string concatenation
+  const totalRealizado = chartData.reduce((s, d) => s + toN(d.realizado), 0);
+  const totalMeta      = chartData.reduce((s, d) => s + toN(d.meta), 0);
+  const totalComissoes = chartData.reduce((s, d) => s + toN(d.totalComissoes), 0);
+  const postosAcima    = chartData.filter(d => d.pct >= 1).length;
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null;
@@ -142,13 +150,13 @@ export default function DashboardPage() {
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                       <XAxis dataKey="posto" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
-                      <Tooltip formatter={v => `${v.toFixed(1)}%`} content={({ active, payload, label }) => active && payload?.length ? (
+                      <Tooltip content={({ active, payload, label }) => active && payload?.length ? (
                         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
                           <div style={{ fontWeight: 700, marginBottom: 4 }}>{label}</div>
-                          <div style={{ color: payload[0].fill }}>{payload[0].value.toFixed(1)}% da meta</div>
+                          <div style={{ color: payload[0].fill }}>{toN(payload[0].value).toFixed(1)}% da meta</div>
                         </div>
                       ) : null} />
-                      <Bar dataKey={d => d.pct * 100} name="% Meta" radius={[4, 4, 0, 0]}>
+                      <Bar dataKey={d => toN(d.pct) * 100} name="% Meta" radius={[4, 4, 0, 0]}>
                         {chartData.map((d, i) => <Cell key={i} fill={d.pct >= 1 ? 'var(--green)' : d.pct >= 0.75 ? 'var(--amber)' : 'var(--red)'} />)}
                       </Bar>
                     </BarChart>
@@ -184,9 +192,9 @@ export default function DashboardPage() {
                           <td style={{ minWidth: 140 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <div className="prog-track" style={{ flex: 1 }}>
-                                <div className="prog-fill" style={{ width: `${Math.min(d.pct * 100, 100)}%`, background: d.pct >= 1 ? 'var(--green)' : d.pct >= 0.75 ? 'var(--amber)' : 'var(--red)' }} />
+                                <div className="prog-fill" style={{ width: `${Math.min(toN(d.pct) * 100, 100)}%`, background: d.pct >= 1 ? 'var(--green)' : d.pct >= 0.75 ? 'var(--amber)' : 'var(--red)' }} />
                               </div>
-                              <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)', width: 40, textAlign: 'right' }}>{(d.pct * 100).toFixed(0)}%</span>
+                              <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)', width: 40, textAlign: 'right' }}>{(toN(d.pct) * 100).toFixed(0)}%</span>
                             </div>
                           </td>
                           <td className="text-right mono" style={{ color: 'var(--green)' }}>{fmt(d.totalComissoes)}</td>

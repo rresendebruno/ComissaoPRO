@@ -12,7 +12,7 @@ export default function PostosPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editPosto, setEditPosto] = useState(null);
-  const [form, setForm] = useState({ codigo: '', nome: '' });
+  const [form, setForm] = useState({ codigo: '', nome: '', whatsapp_group_id: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -25,14 +25,14 @@ export default function PostosPage() {
 
   const openCreate = () => {
     setEditPosto(null);
-    setForm({ codigo: '', nome: '' });
+    setForm({ codigo: '', nome: '', whatsapp_group_id: '' });
     setError('');
     setShowModal(true);
   };
 
   const openEdit = (p) => {
     setEditPosto(p);
-    setForm({ codigo: p.codigo, nome: p.nome });
+    setForm({ codigo: p.codigo, nome: p.nome, whatsapp_group_id: p.whatsapp_group_id || '' });
     setError('');
     setShowModal(true);
   };
@@ -40,10 +40,14 @@ export default function PostosPage() {
   const save = async () => {
     setSaving(true); setError('');
     try {
+      const payload = {
+        nome: form.nome,
+        whatsapp_group_id: form.whatsapp_group_id.trim() || null,
+      };
       if (editPosto) {
-        await axios.put(`${API}/postos/${editPosto.id}`, form);
+        await axios.put(`${API}/postos/${editPosto.id}`, payload);
       } else {
-        await axios.post(`${API}/postos`, form);
+        await axios.post(`${API}/postos`, { ...payload, codigo: form.codigo });
       }
       setShowModal(false);
       load();
@@ -52,7 +56,10 @@ export default function PostosPage() {
   };
 
   const toggleAtivo = async (p) => {
-    await axios.put(`${API}/postos/${p.id}`, { ativo: !p.ativo });
+    await axios.put(`${API}/postos/${p.id}`, {
+      ativo: !p.ativo,
+      whatsapp_group_id: p.whatsapp_group_id || null,
+    });
     load();
   };
 
@@ -95,6 +102,7 @@ export default function PostosPage() {
                       <th>Código</th>
                       <th>Nome</th>
                       <th>Produtos Esp.</th>
+                      <th>WhatsApp</th>
                       <th>Status</th>
                       {isAdmin && <th>Ações</th>}
                     </tr>
@@ -114,6 +122,15 @@ export default function PostosPage() {
                             onClick={() => navigate(`/postos/${p.id}`)}>
                             ver produtos →
                           </span>
+                        </td>
+                        <td>
+                          {p.whatsapp_group_id ? (
+                            <span className="badge badge-green" title={p.whatsapp_group_id}>
+                              ✓ Configurado
+                            </span>
+                          ) : (
+                            <span className="badge badge-gray">Não configurado</span>
+                          )}
                         </td>
                         <td>
                           <span className={`badge ${p.ativo ? 'badge-green' : 'badge-gray'}`}>
@@ -145,6 +162,7 @@ export default function PostosPage() {
         <Modal title={editPosto ? 'Editar Posto' : 'Novo Posto'} onClose={() => setShowModal(false)}>
           <div className="modal-body">
             {error && <div className="alert alert-error">{error}</div>}
+
             <div className="form-row">
               <div className="form-group">
                 <label>Código</label>
@@ -163,6 +181,23 @@ export default function PostosPage() {
                   value={form.nome}
                   onChange={e => setForm({ ...form, nome: e.target.value })}
                 />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>
+                <span style={{ marginRight: 6 }}>📱</span>
+                ID do Grupo WhatsApp
+              </label>
+              <input
+                placeholder="Ex: 120363XXXXXXXXXX@g.us"
+                value={form.whatsapp_group_id}
+                onChange={e => setForm({ ...form, whatsapp_group_id: e.target.value })}
+              />
+              <div className="form-hint">
+                ID do grupo no formato <code style={{ background: 'var(--surface2)', padding: '1px 5px', borderRadius: 3, fontSize: 11 }}>XXXXXXXXXXX@g.us</code>.
+                Obtenha via Evolution API ou enviando uma mensagem no grupo e verificando o número.
+                Deixe em branco para não enviar relatório para este posto.
               </div>
             </div>
           </div>
