@@ -5,6 +5,47 @@ const { query }  = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const { calcularComissoes } = require('../comissoes');
 
+// ── Parse numérico robusto ────────────────────────────────────────────────────
+// Suporta todos os formatos que o Google Sheets pode exportar:
+//   "1.500,00" → 1500.00   (BR: ponto milhar, vírgula decimal)
+//   "1500,00"  → 1500.00   (BR: vírgula decimal sem milhar)
+//   "1500.00"  → 1500.00   (US: ponto decimal)
+//   "1.500"    → 1500.00   (BR: ponto milhar sem decimal)
+//   1500.5     → 1500.50   (já é number)
+function parseVal(v) {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return v;
+  var s = String(v).trim().replace(/[R$\s]/g, '');
+  if (!s) return 0;
+
+  var temPonto  = s.includes('.');
+  var temVirgula = s.includes(',');
+
+  if (temVirgula && temPonto) {
+    // Ambos: descobre qual é o separador decimal pelo que vem por último
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+      // "1.500,00" → vírgula é decimal
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      // "1,500.00" → ponto é decimal
+      s = s.replace(/,/g, '');
+    }
+  } else if (temVirgula) {
+    // Só vírgula: "1500,00" ou "1,5" → vírgula é decimal
+    s = s.replace(',', '.');
+  } else if (temPonto) {
+    // Só ponto: pode ser milhar "1.500" ou decimal "1.5"
+    var partes = s.split('.');
+    if (partes.length === 2 && partes[1].length === 3) {
+      // "1.500" → milhar (parte decimal tem exatamente 3 dígitos)
+      s = s.replace('.', '');
+    }
+    // "1.50" ou "1500.50" → deixa como está (ponto decimal)
+  }
+
+  return parseFloat(s) || 0;
+}
+
 // ── PERÍODOS ──────────────────────────────────────────────────────────────────
 
 router.get('/', auth, async (req, res) => {
@@ -145,9 +186,7 @@ router.post('/:id/metas', auth, adminOnly, async (req, res) => {
 });
 
 // ── DESQUALIFICADOS ───────────────────────────────────────────────────────────
-// FIX 2: Desqualificados persistidos no banco de dados
 
-// Garante que a tabela de desqualificados existe (migração inline tolerante)
 async function ensureDesqTable() {
   await query(`
     CREATE TABLE IF NOT EXISTS periodo_desqualificados (
@@ -224,7 +263,9 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
     const resp = await axios.get(csvUrl, { responseType: 'arraybuffer', timeout: 30000 });
     const wb   = XLSX.read(resp.data, { type: 'buffer' });
     const ws   = wb.Sheets[wb.SheetNames[0]];
-    rows_data  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    // raw:false faz o XLSX retornar os valores já formatados como string,
+    // preservando o formato original da célula (ex: "1.500,00")
+    rows_data  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
   } catch {
     return res.status(400).json({ error: 'Não foi possível acessar a planilha. Verifique se está pública e a URL está correta.' });
   }
@@ -232,7 +273,7 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
   if (!rows_data || rows_data.length < 2)
     return res.status(400).json({ error: 'Planilha vazia ou sem dados' });
 
-  const { rows: postos }  = await query('SELECT * FROM postos WHERE ativo=true');
+  const { rows: postos }   = await query('SELECT * FROM postos WHERE ativo=true');
   const { rows: funcsEsp } = await query(
     'SELECT * FROM periodo_funcionarios WHERE periodo_id=$1', [periodoId]
   );
@@ -264,13 +305,13 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
     const nomeFuncionario = String(colB || '').trim();
     if (!nomeFuncionario) { erros++; continue; }
 
-    const produto        = String(colC || '').trim();
-    const quantidade     = parseFloat(String(colD).replace(',', '.')) || 0;
-    const valor_unitario = parseFloat(String(colE).replace(',', '.')) || 0;
-    const valor_bruto    = parseFloat(String(colF).replace(',', '.')) || 0;
-    const valor_desconto = parseFloat(String(colG).replace(',', '.')) || 0;
-    const valor_acrescimo= parseFloat(String(colH).replace(',', '.')) || 0;
-    const valor_final    = parseFloat(String(colI).replace(',', '.')) || 0;
+    const produto         = String(colC || '').trim();
+    const quantidade      = parseVal(colD);
+    const valor_unitario  = parseVal(colE);
+    const valor_bruto     = parseVal(colF);
+    const valor_desconto  = parseVal(colG);
+    const valor_acrescimo = parseVal(colH);
+    const valor_final     = parseVal(colI);
 
     const funcKey = `${posto.id}|${nomeFuncionario.toLowerCase()}`;
     const tipo    = funcEspIdx[funcKey] || 'frentista';
@@ -299,7 +340,6 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
     );
   }
 
-  // Atualiza sheets_url e grava timestamp da última importação
   await query(
     'UPDATE periodos SET sheets_url=COALESCE($1, sheets_url), data_ultima_importacao=NOW() WHERE id=$2',
     [sheets_url || null, periodoId]
@@ -343,7 +383,6 @@ router.get('/:id/comissoes', auth, async (req, res) => {
 
   if (!periodo.length) return res.status(404).json({ error: 'Período não encontrado' });
 
-  // Carrega desqualificados separadamente — tolerante a falha caso a tabela ainda não exista
   let desqualificados = [];
   try {
     const { rows: desqRows } = await query(
@@ -369,7 +408,6 @@ router.get('/:id/comissoes', auth, async (req, res) => {
 });
 
 // ── VENDAS PAGINADAS ──────────────────────────────────────────────────────────
-// FIX 1: busca por produto também
 
 router.get('/:id/vendas', auth, async (req, res) => {
   const { posto_id, funcionario, page = 1, limit = 50 } = req.query;
@@ -381,7 +419,6 @@ router.get('/:id/vendas', auth, async (req, res) => {
     params.push(posto_id);
   }
   if (funcionario) {
-    // FIX 1: search both funcionario name AND produto
     conditions.push(`(v.funcionario ILIKE $${i} OR v.produto ILIKE $${i})`);
     params.push(`%${funcionario}%`);
     i++;

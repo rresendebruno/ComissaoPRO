@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { getConfig } from '../../pages/ConfiguracoesPage';
+import axios from 'axios';
+import { API } from '../../contexts/AuthContext';
 
 const IC = {
   dash: <svg className="icon" viewBox="0 0 20 20" fill="currentColor"><path d="M2 4a2 2 0 012-2h3a2 2 0 012 2v3a2 2 0 01-2 2H4a2 2 0 01-2-2V4zm9 0a2 2 0 012-2h3a2 2 0 012 2v3a2 2 0 01-2 2h-3a2 2 0 01-2-2V4zM2 11a2 2 0 012-2h3a2 2 0 012 2v3a2 2 0 01-2 2H4a2 2 0 01-2-2v-3zm9 0a2 2 0 012-2h3a2 2 0 012 2v3a2 2 0 01-2 2h-3a2 2 0 01-2-2v-3z"/></svg>,
@@ -13,16 +14,23 @@ const IC = {
   out: <svg className="icon" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clipRule="evenodd"/></svg>
 };
 
+const DEFAULT_CONFIG = { nome: 'ComissõesPRO', logo: null };
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [sysConfig, setSysConfig] = useState(getConfig());
+  const [sysConfig, setSysConfig] = useState(DEFAULT_CONFIG);
 
   const initials = user?.name?.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase() || '?';
 
-  // Escuta atualizações de config sem recarregar a página
+  // Carrega config do banco ao montar
   useEffect(() => {
-    const handler = () => setSysConfig(getConfig());
+    axios.get(`${API}/config`).then(r => setSysConfig(r.data)).catch(() => {});
+  }, []);
+
+  // Escuta atualizações feitas na página de configurações (mesmo browser)
+  useEffect(() => {
+    const handler = (e) => setSysConfig(e.detail || DEFAULT_CONFIG);
     window.addEventListener('config-updated', handler);
     return () => window.removeEventListener('config-updated', handler);
   }, []);

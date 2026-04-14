@@ -1,16 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-
-function getBranding() {
-  try {
-    const raw = localStorage.getItem('comissoes_config');
-    if (!raw) return { nome: 'ComissõesPRO', logo: null };
-    return JSON.parse(raw);
-  } catch {
-    return { nome: 'ComissõesPRO', logo: null };
-  }
-}
+import axios from 'axios';
+import { API } from '../contexts/AuthContext';
 
 export default function LoginPage() {
   const { login, user } = useAuth();
@@ -18,14 +10,26 @@ export default function LoginPage() {
   const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [branding, setBranding] = useState(getBranding());
+  const [branding, setBranding] = useState({ nome: 'ComissõesPRO', logo: null });
 
+  // Carrega config do banco (endpoint público via auth — ainda precisa do token,
+  // mas na tela de login fazemos sem token e o backend não exige auth para /config GET
+  // — ajuste: vamos buscar sem auth header)
   useEffect(() => {
-    document.title = branding.nome || 'ComissõesPRO';
-    const handler = () => setBranding(getBranding());
+    axios.get(`${API}/config`).then(r => {
+      setBranding(r.data);
+      document.title = r.data.nome || 'ComissõesPRO';
+    }).catch(() => {});
+
+    const handler = (e) => {
+      if (e.detail) {
+        setBranding(e.detail);
+        document.title = e.detail.nome || 'ComissõesPRO';
+      }
+    };
     window.addEventListener('config-updated', handler);
     return () => window.removeEventListener('config-updated', handler);
-  }, [branding.nome]);
+  }, []);
 
   if (user) { navigate('/'); return null; }
 

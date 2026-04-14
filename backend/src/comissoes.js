@@ -1,25 +1,27 @@
 /**
- * MOTOR DE CÁLCULO DE COMISSÕES v5.1
+ * MOTOR DE CÁLCULO DE COMISSÕES v5.4
  *
- * FIX v5.1: precisão de ponto flutuante
- * Todos os valores monetários são arredondados para 2 casas decimais
- * e quantidades para 3 casas, eliminando erros de acumulação float.
- *
- * Funções auxiliares:
- *   n2(v)    — converte para Number e arredonda para 2 casas (R$)
- *   n3(v)    — converte para Number e arredonda para 3 casas (qtd)
- *   add2(a,b)— soma dois monetários sem acumular erro float
- *   add3(a,b)— soma duas quantidades sem acumular erro float
- *   mul2(a,b)— multiplica e arredonda para 2 casas
+ * FIX v5.4:
+ * - Quando há mais de um gerente no posto, o 3% do total do posto
+ *   é DIVIDIDO igualmente entre eles (não pago inteiro para cada um).
+ * - Dashboard: corrigido uso de meta_posto no lugar de meta_frentista.
  */
 
 // ── Helpers de precisão ───────────────────────────────────────────────────────
 
-function n2(v)     { return Math.round((Number(v) || 0) * 100) / 100; }
-function n3(v)     { return Math.round((Number(v) || 0) * 1000) / 1000; }
-function add2(a,b) { return Math.round((a + b) * 100) / 100; }
-function add3(a,b) { return Math.round((a + b) * 1000) / 1000; }
-function mul2(a,b) { return Math.round(a * b * 100) / 100; }
+function N(v) {
+  if (v == null) return 0;
+  if (typeof v === 'number') return v;
+  var s = String(v).trim().replace(/[R$\s]/g, '');
+  return Number(s) || 0;
+}
+
+function n2(v)     { return Math.round(N(v) * 100) / 100; }
+function n3(v)     { return Math.round(N(v) * 1000) / 1000; }
+function add2(a,b) { return Math.round((N(a) + N(b)) * 100) / 100; }
+function add3(a,b) { return Math.round((N(a) + N(b)) * 1000) / 1000; }
+function mul2(a,b) { return Math.round(N(a) * N(b) * 100) / 100; }
+function div2(a,b) { return b === 0 ? 0 : Math.round((N(a) / N(b)) * 100) / 100; }
 
 // ── Faixas de comissão ────────────────────────────────────────────────────────
 
@@ -143,7 +145,6 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     var p    = getPosto(sid);
     var nome = v.funcionario;
 
-    // FIX: n2/n3 na entrada eliminam lixo de ponto flutuante do banco
     var vf   = n2(v.valor_final);
     var qtd  = n3(v.quantidade);
     var tipo = v.tipo_funcionario;
@@ -191,7 +192,6 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       }
     }
 
-    // Acumula qtd total do produto no posto (para comissão gerente)
     var peKey = sid + '|' + v.produto.trim().toLowerCase();
     if (espIdx[peKey]) {
       if (!p.espPosto[peKey]) p.espPosto[peKey] = { pe: espIdx[peKey], qtdTotal: 0 };
@@ -208,7 +208,6 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     var dados = porPosto[sid];
     var meta  = metasIdx[sid] || { meta_frentista: 0, meta_trocador: 0, meta_posto: 0 };
 
-    // FIX: arredonda metas antes de aplicar pro rata
     var mF = n2(mul2(n2(meta.meta_frentista), proRata.fator));
     var mT = n2(mul2(n2(meta.meta_trocador),  proRata.fator));
     var mP = n2(mul2(n2(meta.meta_posto),     proRata.fator));
@@ -314,6 +313,26 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     var gerenteAtingiu = pctPosto >= 1.0;
     var nomesGer       = Object.keys(dados.gerentes);
 
+    // FIX v5.4: contar apenas gerentes NÃO desqualificados para dividir o 3%
+    var qtdGerentesAtivos = 0;
+    for (var gi = 0; gi < nomesGer.length; gi++) {
+      var dkCheck = sid + '|' + nomesGer[gi].trim().toLowerCase() + '|gerente';
+      if (!desqIdx[dkCheck]) qtdGerentesAtivos++;
+    }
+    if (qtdGerentesAtivos === 0) qtdGerentesAtivos = 1; // segurança
+
+    // 3% do total do posto dividido igualmente entre os gerentes ativos
+    var com3PTotal = gerenteAtingiu ? mul2(dados.totalPosto, 0.03) : 0;
+    var com3PPorGerente = div2(com3PTotal, qtdGerentesAtivos);
+
+    // Itens especiais do gerente também divididos igualmente
+    var totalEspGerPorGerente = div2(totalEspGer, qtdGerentesAtivos);
+    var itensEspGerDivididos  = itensEspGer.map(function(ie) {
+      return Object.assign({}, ie, {
+        comissao_total: div2(ie.comissao_total, qtdGerentesAtivos),
+      });
+    });
+
     for (var gi = 0; gi < nomesGer.length; gi++) {
       var nome  = nomesGer[gi];
       var fg    = dados.gerentes[nome];
@@ -323,7 +342,6 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       var dm     = desqIdx[dk];
       var isD    = !!dm;
 
-      // Comissão própria como trocador (se também é trocador)
       var pctT = 0, taxaT = 0, comPropT = 0, comEspT = 0;
       if (isTroc) {
         var vendasTrocCalc   = fg.vendasTroc;
@@ -353,26 +371,26 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         for (var ii = 0; ii < itensEspTrocCalc.length; ii++) comEspT = add2(comEspT, itensEspTrocCalc[ii].comissao_total);
       }
 
-      // Comissão própria como frentista
       var pctF     = mF > 0 ? fg.vendasFrent / mF : 0;
       var taxaF    = getFaixaFrentista(pctF);
       var comPropF = mul2(fg.vendasFrent, taxaF);
       var comEspF  = 0;
       for (var ii = 0; ii < fg.itensEspFrent.length; ii++) comEspF = add2(comEspF, fg.itensEspFrent[ii].comissao_total);
 
-      // 3% do total do posto (se meta atingida)
-      var com3P     = gerenteAtingiu ? mul2(dados.totalPosto, 0.03) : 0;
-      var comEspGer = isD ? 0 : totalEspGer;
-      var comBase   = add2(com3P, comEspGer);
+      // Usa a fatia do gerente (dividida pelo nº de gerentes ativos)
+      var comEspGer = isD ? 0 : totalEspGerPorGerente;
+      var comBase   = isD ? 0 : add2(com3PPorGerente, comEspGer);
 
       var totPropF = isD ? 0 : add2(comPropF, comEspF);
       var totPropT = isD ? 0 : add2(comPropT, comEspT);
       var totGer   = isD ? 0 : add2(comBase, add2(totPropF, totPropT));
 
+      var totalVendasGerente = add2(fg.vendasFrent, fg.vendasTroc);
+
       res.funcionarios.push({
         nome:               nome,
         tipo:               'gerente',
-        totalVendas:        dados.totalPosto,
+        totalVendas:        totalVendasGerente,
         vendasPropFrentista: fg.vendasFrent,
         vendasPropTrocador:  fg.vendasTroc,
         metaEfetiva:        mP,
@@ -394,9 +412,9 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         comissaoEspTroc:    isD ? 0 : comEspT,
         totalPropTrocador:  totPropT,
 
-        comissaoPercentualPosto: isD ? 0 : com3P,
+        comissaoPercentualPosto: isD ? 0 : com3PPorGerente,
         comissaoAgregados:       isD ? 0 : comBase,
-        itensEspeciais:          itensEspGer,
+        itensEspeciais:          isD ? [] : itensEspGerDivididos,
         comissaoEspeciais:       comEspGer,
         totalComissaoGerencial:  isD ? 0 : comBase,
 
@@ -407,7 +425,6 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         desqualificado:        isD,
         motivoDesqualificacao: dm || null,
 
-        // Compatibilidade com frontend existente
         acumulaTrocador:           isTroc,
         comissaoTrocadorAcumulada: isD ? 0 : comPropT,
         itensEspeciaisTrocador:    fg.itensEspTroc,

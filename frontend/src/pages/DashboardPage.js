@@ -6,7 +6,6 @@ import { fmt, fmtPct, statusMeta, somaSegura } from '../utils/fmt';
 import { Spinner } from '../components/ui';
 import { useNavigate } from 'react-router-dom';
 
-// Converte qualquer valor para Number com segurança
 const toN = (v) => (v == null ? 0 : Number(v) || 0);
 
 export default function DashboardPage() {
@@ -38,22 +37,20 @@ export default function DashboardPage() {
 
   const chartData = postoIds.map(pid => {
     const d = comissoes[pid];
-    const meta = toN(d.metaFrentista) || 0;
-    // FIX: somaSegura garante que totalVendas (pode vir como string) seja convertido
-    const totalFrent = somaSegura(
-      d.funcionarios.filter(f => f.tipo === 'frentista'),
-      f => f.totalVendas
-    );
+
+    // FIX: usa totalVendasPosto (total real do posto) e metaPostoEfetiva para comparação
+    const totalPosto = toN(d.totalVendasPosto);
+    const metaPosto  = toN(d.metaPostoEfetiva) || toN(d.metaPosto);
+
     return {
       posto: `P${pid}`,
-      realizado: totalFrent,
-      meta,
-      pct: meta > 0 ? totalFrent / meta : 0,
+      realizado: totalPosto,
+      meta: metaPosto,
+      pct: metaPosto > 0 ? totalPosto / metaPosto : 0,
       totalComissoes: toN(d.totalComissoes),
     };
   }).sort((a, b) => a.posto.localeCompare(b.posto));
 
-  // FIX: todos os totalizadores usam toN() para evitar string concatenation
   const totalRealizado = chartData.reduce((s, d) => s + toN(d.realizado), 0);
   const totalMeta      = chartData.reduce((s, d) => s + toN(d.meta), 0);
   const totalComissoes = chartData.reduce((s, d) => s + toN(d.totalComissoes), 0);
@@ -97,7 +94,7 @@ export default function DashboardPage() {
             {/* Stats */}
             <div className="stats">
               <div className="stat">
-                <div className="stat-label">Total Vendido (Frentistas)</div>
+                <div className="stat-label">Total Vendido (Posto)</div>
                 <div className="stat-value" style={{ color: 'var(--text)' }}>{fmt(totalRealizado)}</div>
                 <div className="stat-note">{fmtPct(totalMeta > 0 ? totalRealizado / totalMeta : 0)} da meta</div>
               </div>
@@ -122,7 +119,7 @@ export default function DashboardPage() {
             <div className="grid-2 mb-4" style={{ marginBottom: 16 }}>
               <div className="card">
                 <div className="card-header">
-                  <div><div className="card-title">Realizado vs Meta</div><div className="card-sub">Por posto — frentistas</div></div>
+                  <div><div className="card-title">Realizado vs Meta do Posto</div><div className="card-sub">Total de vendas por posto</div></div>
                 </div>
                 <div style={{ padding: '16px 4px 8px' }}>
                   <ResponsiveContainer width="100%" height={240}>
@@ -175,7 +172,7 @@ export default function DashboardPage() {
                 <table>
                   <thead>
                     <tr>
-                      <th>#</th><th>Posto</th><th className="text-right">Meta Frent.</th>
+                      <th>#</th><th>Posto</th><th className="text-right">Meta Posto</th>
                       <th className="text-right">Realizado</th><th>Atingimento</th>
                       <th className="text-right">Total Comissões</th><th>Status</th>
                     </tr>
