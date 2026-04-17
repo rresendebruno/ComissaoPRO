@@ -1,10 +1,9 @@
 /**
- * MOTOR DE CÁLCULO DE COMISSÕES v5.4
+ * MOTOR DE CÁLCULO DE COMISSÕES v5.5
  *
- * FIX v5.4:
- * - Quando há mais de um gerente no posto, o 3% do total do posto
- *   é DIVIDIDO igualmente entre eles (não pago inteiro para cada um).
- * - Dashboard: corrigido uso de meta_posto no lugar de meta_frentista.
+ * FIX v5.5:
+ * - Gerente: expõe itensEspFrentista (itens especiais que ele próprio vendeu
+ *   como frentista) separado de itensEspeciais (itens gerenciais do posto divididos).
  */
 
 // ── Helpers de precisão ───────────────────────────────────────────────────────
@@ -313,24 +312,19 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
     var gerenteAtingiu = pctPosto >= 1.0;
     var nomesGer       = Object.keys(dados.gerentes);
 
-    // FIX v5.4: contar apenas gerentes NÃO desqualificados para dividir o 3%
     var qtdGerentesAtivos = 0;
     for (var gi = 0; gi < nomesGer.length; gi++) {
       var dkCheck = sid + '|' + nomesGer[gi].trim().toLowerCase() + '|gerente';
       if (!desqIdx[dkCheck]) qtdGerentesAtivos++;
     }
-    if (qtdGerentesAtivos === 0) qtdGerentesAtivos = 1; // segurança
+    if (qtdGerentesAtivos === 0) qtdGerentesAtivos = 1;
 
-    // 3% do total do posto dividido igualmente entre os gerentes ativos
-    var com3PTotal = gerenteAtingiu ? mul2(dados.totalPosto, 0.03) : 0;
+    var com3PTotal      = gerenteAtingiu ? mul2(dados.totalPosto, 0.03) : 0;
     var com3PPorGerente = div2(com3PTotal, qtdGerentesAtivos);
 
-    // Itens especiais do gerente também divididos igualmente
     var totalEspGerPorGerente = div2(totalEspGer, qtdGerentesAtivos);
     var itensEspGerDivididos  = itensEspGer.map(function(ie) {
-      return Object.assign({}, ie, {
-        comissao_total: div2(ie.comissao_total, qtdGerentesAtivos),
-      });
+      return Object.assign({}, ie, { comissao_total: div2(ie.comissao_total, qtdGerentesAtivos) });
     });
 
     for (var gi = 0; gi < nomesGer.length; gi++) {
@@ -377,7 +371,6 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
       var comEspF  = 0;
       for (var ii = 0; ii < fg.itensEspFrent.length; ii++) comEspF = add2(comEspF, fg.itensEspFrent[ii].comissao_total);
 
-      // Usa a fatia do gerente (dividida pelo nº de gerentes ativos)
       var comEspGer = isD ? 0 : totalEspGerPorGerente;
       var comBase   = isD ? 0 : add2(com3PPorGerente, comEspGer);
 
@@ -400,6 +393,7 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
         pctMetaFrentista:   pctF,
         taxaFrentista:      isD ? 0 : taxaF,
         comissaoPropFrent:  isD ? 0 : comPropF,
+        // FIX v5.5: exposto para o frontend renderizar
         itensEspFrentista:  fg.itensEspFrent,
         comissaoEspFrent:   isD ? 0 : comEspF,
         totalPropFrentista: totPropF,
@@ -414,6 +408,7 @@ function calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios
 
         comissaoPercentualPosto: isD ? 0 : com3PPorGerente,
         comissaoAgregados:       isD ? 0 : comBase,
+        // itensEspeciais = itens gerenciais do posto (qtd total ÷ nº gerentes)
         itensEspeciais:          isD ? [] : itensEspGerDivididos,
         comissaoEspeciais:       comEspGer,
         totalComissaoGerencial:  isD ? 0 : comBase,

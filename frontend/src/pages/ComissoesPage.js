@@ -155,7 +155,6 @@ export default function ComissoesPage() {
             const naoGerentes = funcs.filter(f => f.tipo !== 'gerente');
             const totalDesq   = d.funcionarios.filter(f => f.desqualificado).length;
 
-            // Detecta se há múltiplos gerentes para exibir aviso de divisão
             const todosGerentes = d.funcionarios.filter(f => f.tipo === 'gerente');
             const multiGerente  = todosGerentes.length > 1;
 
@@ -346,7 +345,6 @@ export default function ComissoesPage() {
                       gap: 12,
                     }}>
                       <span>Gerentes — comissão cumulativa</span>
-                      {/* FIX A: aviso de divisão do 3% quando há múltiplos gerentes */}
                       {multiGerente && todosGerentes[0]?.gerentesNoPostoCount > 1 && (
                         <span style={{
                           fontSize: 10,
@@ -407,7 +405,6 @@ export default function ComissoesPage() {
                                   {f.metaAtingida && !f.desqualificado ? (
                                     <span style={{ color: 'var(--green)' }}>
                                       {fmt(f.comissaoPercentualPosto)}
-                                      {/* FIX A: indica a divisão quando há múltiplos gerentes */}
                                       {toN(f.gerentesNoPostoCount) > 1 && (
                                         <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>
                                           (÷{f.gerentesNoPostoCount})
@@ -451,6 +448,7 @@ export default function ComissoesPage() {
                                 </tr>
                               )}
 
+                              {/* Itens especiais gerenciais do posto (divididos) */}
                               {!f.desqualificado && f.itensEspeciais?.map((ie, j) => (
                                 <tr key={`ieg-${j}`} style={{ background: 'rgba(79,110,247,0.04)' }}>
                                   <td colSpan={3} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--accent)' }}>
@@ -468,6 +466,22 @@ export default function ComissoesPage() {
                                 </tr>
                               ))}
 
+                              {/* FIX v5.5 — Itens especiais que o gerente vendeu como frentista próprio */}
+                              {!f.desqualificado && f.itensEspFrentista?.map((ie, j) => (
+                                <tr key={`iepf-${j}`} style={{ background: 'rgba(79,110,247,0.04)' }}>
+                                  <td colSpan={3} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--text-dim)' }}>
+                                    ★ {ie.produto} (próprio frentista — {fmtQ(ie.quantidade)} un)
+                                  </td>
+                                  <td colSpan={2} />
+                                  <td colSpan={1} />
+                                  <td className="text-right mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                                    {fmt(ie.comissao_unit)}/un = {fmt(ie.comissao_total)}
+                                  </td>
+                                  <td />
+                                </tr>
+                              ))}
+
+                              {/* Itens especiais do gerente como trocador próprio */}
                               {!f.desqualificado && f.acumulaTrocador && f.itensEspeciaisTrocador?.map((ie, j) => (
                                 <tr key={`iet-${j}`} style={{ background: 'rgba(245,158,11,0.04)' }}>
                                   <td colSpan={3} style={{ paddingLeft: 32, fontSize: 11, color: 'var(--amber)' }}>
