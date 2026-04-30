@@ -11,6 +11,7 @@ import PostosPage from './pages/PostosPage';
 import PostoDetailPage from './pages/PostoDetailPage';
 import UsuariosPage from './pages/UsuariosPage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
+import RelatoriosPage from './pages/RelatoriosPage';
 
 function Guard({ children, admin }) {
   const { user, loading } = useAuth();
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="periodos" element={<PeriodosPage />} />
             <Route path="periodos/:id" element={<PeriodoDetailPage />} />
             <Route path="comissoes" element={<ComissoesPage />} />
+            <Route path="relatorios" element={<RelatoriosPage />} />
             <Route path="postos" element={<PostosPage />} />
             <Route path="postos/:id" element={<PostoDetailPage />} />
             <Route path="usuarios" element={<Guard admin><UsuariosPage /></Guard>} />

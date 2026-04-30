@@ -6,44 +6,88 @@ const { auth, adminOnly } = require('../middleware/auth');
 const { calcularComissoes } = require('../comissoes');
 
 // ── Parse numérico robusto ────────────────────────────────────────────────────
-// Suporta todos os formatos que o Google Sheets pode exportar:
-//   "1.500,00" → 1500.00   (BR: ponto milhar, vírgula decimal)
-//   "1500,00"  → 1500.00   (BR: vírgula decimal sem milhar)
-//   "1500.00"  → 1500.00   (US: ponto decimal)
-//   "1.500"    → 1500.00   (BR: ponto milhar sem decimal)
-//   1500.5     → 1500.50   (já é number)
 function parseVal(v) {
   if (v == null || v === '') return 0;
   if (typeof v === 'number') return v;
   var s = String(v).trim().replace(/[R$\s]/g, '');
   if (!s) return 0;
 
-  var temPonto  = s.includes('.');
+  var temPonto   = s.includes('.');
   var temVirgula = s.includes(',');
 
   if (temVirgula && temPonto) {
-    // Ambos: descobre qual é o separador decimal pelo que vem por último
     if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
-      // "1.500,00" → vírgula é decimal
       s = s.replace(/\./g, '').replace(',', '.');
     } else {
-      // "1,500.00" → ponto é decimal
       s = s.replace(/,/g, '');
     }
   } else if (temVirgula) {
-    // Só vírgula: "1500,00" ou "1,5" → vírgula é decimal
     s = s.replace(',', '.');
   } else if (temPonto) {
-    // Só ponto: pode ser milhar "1.500" ou decimal "1.5"
     var partes = s.split('.');
     if (partes.length === 2 && partes[1].length === 3) {
-      // "1.500" → milhar (parte decimal tem exatamente 3 dígitos)
       s = s.replace('.', '');
     }
-    // "1.50" ou "1500.50" → deixa como está (ponto decimal)
   }
 
   return parseFloat(s) || 0;
+}
+
+// ── Helper: formata moeda BRL ─────────────────────────────────────────────────
+function fmtBRL(v) {
+  if (v == null) return 'R$ 0,00';
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency', currency: 'BRL',
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(Number(v) || 0);
+}
+
+// ── Helper: envia texto via Evolution API ─────────────────────────────────────
+function parseEvoConfig() {
+  const EVOURL  = process.env.EVOURL;
+  const API_KEY = process.env.API_KEY;
+
+  if (!EVOURL || !API_KEY) return null; // sem config → silencia, não lança erro
+
+  const sendMatch = EVOURL.match(/\/message\/send\w+\/([^/?#]+)/);
+  let instanceName, baseUrl;
+
+  if (sendMatch) {
+    instanceName = sendMatch[1];
+    baseUrl = EVOURL.replace(/\/message\/send\w+\/[^/?#]+.*$/, '');
+  } else {
+    const clean = EVOURL.replace(/\/$/, '');
+    const parts = clean.split('/');
+    const last  = parts[parts.length - 1];
+    if (last && !['api', 'v1', 'v2'].includes(last.toLowerCase())) {
+      instanceName = last;
+      baseUrl = parts.slice(0, -1).join('/');
+    } else {
+      return null;
+    }
+  }
+
+  if (!instanceName) return null;
+  return { baseUrl, instanceName, apiKey: API_KEY };
+}
+
+async function enviarTextoWpp(groupId, texto) {
+  const cfg = parseEvoConfig();
+  if (!cfg) return; // Evolution API não configurada → ignora silenciosamente
+
+  const url     = `${cfg.baseUrl}/message/sendText/${cfg.instanceName}`;
+  const payload = { number: groupId, text: texto };
+
+  try {
+    await axios.post(url, payload, {
+      headers: { apikey: cfg.apiKey, 'Content-Type': 'application/json' },
+      timeout: 15000,
+    });
+    console.log(`[WhatsApp] Notificação de meta enviada para ${groupId}`);
+  } catch (e) {
+    // Falha no envio não deve quebrar a requisição principal
+    console.error(`[WhatsApp] Falha ao enviar notificação para ${groupId}:`, e.message);
+  }
 }
 
 // ── PERÍODOS ──────────────────────────────────────────────────────────────────
@@ -171,17 +215,86 @@ router.get('/:id/metas', auth, async (req, res) => {
   res.json(rows);
 });
 
+// ── POST /periodos/:id/metas — salva/atualiza meta e notifica WhatsApp ────────
 router.post('/:id/metas', auth, adminOnly, async (req, res) => {
   const { posto_id, meta_frentista, meta_trocador, meta_posto } = req.body;
   if (!posto_id) return res.status(400).json({ error: 'posto_id obrigatório' });
+
+  const novoF = Number(meta_frentista) || 0;
+  const novoT = Number(meta_trocador)  || 0;
+  const novoP = Number(meta_posto)     || 0;
+
+  // ── 1. Captura valores anteriores (se a meta já existia) ──────────────────
+  const { rows: anterior } = await query(
+    `SELECT m.*, p.codigo as posto_codigo, p.nome as posto_nome, p.whatsapp_group_id,
+            per.nome as periodo_nome
+     FROM metas m
+     JOIN postos p ON p.id = m.posto_id
+     JOIN periodos per ON per.id = m.periodo_id
+     WHERE m.posto_id=$1 AND m.periodo_id=$2`,
+    [posto_id, req.params.id]
+  );
+
+  const isEdicao = anterior.length > 0;
+
+  // ── 2. Upsert da meta ─────────────────────────────────────────────────────
   const { rows } = await query(
     `INSERT INTO metas (periodo_id, posto_id, meta_frentista, meta_trocador, meta_posto)
      VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (posto_id, periodo_id) DO UPDATE
        SET meta_frentista=$3, meta_trocador=$4, meta_posto=$5
      RETURNING *`,
-    [req.params.id, posto_id, meta_frentista || 0, meta_trocador || 0, meta_posto || 0]
+    [req.params.id, posto_id, novoF, novoT, novoP]
   );
+
+  // ── 3. Notificação WhatsApp (somente em edição com grupo configurado) ──────
+  if (isEdicao) {
+    const ant        = anterior[0];
+    const groupId    = ant.whatsapp_group_id;
+    const antF       = Number(ant.meta_frentista) || 0;
+    const antT       = Number(ant.meta_trocador)  || 0;
+    const antP       = Number(ant.meta_posto)     || 0;
+
+    // Só envia se algo mudou e o posto tem grupo configurado
+    const houveAlteracao = antF !== novoF || antT !== novoT || antP !== novoP;
+
+    if (groupId && groupId.trim() && houveAlteracao) {
+      const linhas = [];
+
+      if (antF !== novoF) {
+        linhas.push(
+          `📋 *Meta Frentista:*\n` +
+          `   Anterior: ${fmtBRL(antF)}\n` +
+          `   Novo:     ${fmtBRL(novoF)}`
+        );
+      }
+      if (antT !== novoT) {
+        linhas.push(
+          `🔧 *Meta Trocador:*\n` +
+          `   Anterior: ${fmtBRL(antT)}\n` +
+          `   Novo:     ${fmtBRL(novoT)}`
+        );
+      }
+      if (antP !== novoP) {
+        linhas.push(
+          `🏪 *Meta do Posto:*\n` +
+          `   Anterior: ${fmtBRL(antP)}\n` +
+          `   Novo:     ${fmtBRL(novoP)}`
+        );
+      }
+
+      const mensagem =
+        `⚠️ *Atualização de Metas*\n` +
+        `📍 ${ant.posto_codigo} — ${ant.posto_nome}\n` +
+        `📅 Período: ${ant.periodo_nome}\n\n` +
+        linhas.join('\n\n') +
+        `\n\n_Alteração realizada em ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}_`;
+
+      // Dispara em background — não bloqueia a resposta
+      enviarTextoWpp(groupId.trim(), mensagem).catch(() => {});
+    }
+  }
+
   res.json(rows[0]);
 });
 
@@ -263,8 +376,6 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
     const resp = await axios.get(csvUrl, { responseType: 'arraybuffer', timeout: 30000 });
     const wb   = XLSX.read(resp.data, { type: 'buffer' });
     const ws   = wb.Sheets[wb.SheetNames[0]];
-    // raw:false faz o XLSX retornar os valores já formatados como string,
-    // preservando o formato original da célula (ex: "1.500,00")
     rows_data  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
   } catch {
     return res.status(400).json({ error: 'Não foi possível acessar a planilha. Verifique se está pública e a URL está correta.' });
@@ -475,5 +586,90 @@ router.get('/:id/todos-funcionarios', auth, async (req, res) => {
   todos.sort((a, b) => a.posto_codigo.localeCompare(b.posto_codigo) || a.nome.localeCompare(b.nome));
   res.json(todos);
 });
+
+// ── REPLICAR PERÍODO ──────────────────────────────────────────────────────────
+// POST /api/periodos/:id/replicar
+// Body: { origem_id: number }
+//
+// Copia do período origem para o período destino (:id):
+//   - metas (meta_frentista, meta_trocador, meta_posto) por posto
+//   - periodo_funcionarios (gerentes e trocadores) por posto
+//
+// Regras:
+//   - Metas já existentes no destino são atualizadas (upsert)
+//   - Funcionários já existentes no destino são ignorados (on conflict do nothing)
+//   - O período destino deve existir e ser diferente do origem
+
+router.post('/:id/replicar', auth, adminOnly, async (req, res) => {
+  const destinoId = parseInt(req.params.id);
+  const { origem_id } = req.body;
+  const origemId = parseInt(origem_id);
+
+  if (!origemId || isNaN(origemId)) {
+    return res.status(400).json({ error: 'origem_id é obrigatório' });
+  }
+  if (destinoId === origemId) {
+    return res.status(400).json({ error: 'O período origem deve ser diferente do destino' });
+  }
+
+  // Valida existência de ambos os períodos
+  const [{ rows: destRows }, { rows: origRows }] = await Promise.all([
+    query('SELECT id, nome FROM periodos WHERE id=$1', [destinoId]),
+    query('SELECT id, nome FROM periodos WHERE id=$1', [origemId]),
+  ]);
+  if (!destRows.length) return res.status(404).json({ error: 'Período destino não encontrado' });
+  if (!origRows.length) return res.status(404).json({ error: 'Período origem não encontrado' });
+
+  // ── 1. Replica metas ───────────────────────────────────────────────────────
+  const { rows: metasOrigem } = await query(
+    `SELECT posto_id, meta_frentista, meta_trocador, meta_posto
+     FROM metas WHERE periodo_id = $1`,
+    [origemId]
+  );
+
+  let metasReplicadas = 0;
+  for (const m of metasOrigem) {
+    await query(
+      `INSERT INTO metas (periodo_id, posto_id, meta_frentista, meta_trocador, meta_posto)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (posto_id, periodo_id) DO UPDATE
+         SET meta_frentista = $3,
+             meta_trocador  = $4,
+             meta_posto     = $5`,
+      [destinoId, m.posto_id, m.meta_frentista, m.meta_trocador, m.meta_posto]
+    );
+    metasReplicadas++;
+  }
+
+  // ── 2. Replica funcionários (gerentes e trocadores) ────────────────────────
+  const { rows: funcsOrigem } = await query(
+    `SELECT posto_id, nome, tipo
+     FROM periodo_funcionarios WHERE periodo_id = $1`,
+    [origemId]
+  );
+
+  let funcsReplicados = 0;
+  let funcsIgnorados  = 0;
+  for (const f of funcsOrigem) {
+    const { rowCount } = await query(
+      `INSERT INTO periodo_funcionarios (periodo_id, posto_id, nome, tipo)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (periodo_id, posto_id, nome, tipo) DO NOTHING`,
+      [destinoId, f.posto_id, f.nome, f.tipo]
+    );
+    if (rowCount > 0) funcsReplicados++;
+    else funcsIgnorados++;
+  }
+
+  res.json({
+    success: true,
+    origem:  { id: origemId,  nome: origRows[0].nome },
+    destino: { id: destinoId, nome: destRows[0].nome },
+    metas:       { replicadas: metasReplicadas },
+    funcionarios:{ replicados: funcsReplicados, ignorados: funcsIgnorados },
+    message: `Replicação concluída: ${metasReplicadas} meta(s) e ${funcsReplicados} funcionário(s) copiados de "${origRows[0].nome}".`,
+  });
+});
+
 
 module.exports = router;

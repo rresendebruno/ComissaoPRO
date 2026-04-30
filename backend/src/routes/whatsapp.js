@@ -98,6 +98,9 @@ function gerarPDFScript(posto, periodoNome, dadosPosto, outputPath) {
       tambem_trocador:   f.tambemTrocador || false,
       total_prop_frent:  f.totalPropFrentista || 0,
       total_prop_troc:   f.totalPropTrocador || 0,
+      // vendas brutas por papel (para gerente mostrar total vendido)
+      vendas_prop_frentista: f.vendasPropFrentista || 0,
+      vendas_prop_trocador:  f.vendasPropTrocador  || 0,
     })),
   }, null, 2));
 
@@ -201,16 +204,17 @@ story.append(hdr)
 story.append(Spacer(1, 8))
 
 # ── KPIs ─────────────────────────────────────────────────────────────────────
+# Linha 1: resumo financeiro do posto
 pct_posto = float(d['pct_meta_posto'] or 0)
 pct_posto_cor = C_GREEN if pct_posto >= 1 else (C_AMBER if pct_posto >= 0.75 else C_RED)
 
 kpis = [
     ['Total Vendas Posto', 'Meta Posto Efetiva', '% Meta Posto', 'Total Comissões'],
     [
-        Paragraph(brl(d['total_vendas_posto']), S('kv1', fontSize=11, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER)),
-        Paragraph(brl(d['meta_posto_ef']), S('kv2', fontSize=11, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER)),
-        Paragraph(f"{pct_posto*100:.1f}%", S('kv3', fontSize=11, fontName='Helvetica-Bold', textColor=pct_posto_cor, alignment=TA_CENTER)),
-        Paragraph(brl(d['total_comissoes']), S('kv4', fontSize=11, fontName='Helvetica-Bold', textColor=C_GREEN, alignment=TA_CENTER)),
+        Paragraph(brl(d['total_vendas_posto']), S('kv1', fontSize=12, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER)),
+        Paragraph(brl(d['meta_posto_ef']), S('kv2', fontSize=12, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER)),
+        Paragraph(f"{pct_posto*100:.1f}%", S('kv3', fontSize=12, fontName='Helvetica-Bold', textColor=pct_posto_cor, alignment=TA_CENTER)),
+        Paragraph(brl(d['total_comissoes']), S('kv4', fontSize=12, fontName='Helvetica-Bold', textColor=C_GREEN, alignment=TA_CENTER)),
     ]
 ]
 
@@ -225,16 +229,52 @@ kpi_style = TableStyle([
     ('BOTTOMPADDING', (0,0),(-1,-1), 8),
     ('GRID', (0,0),(-1,-1), 0.5, C_BORD),
     ('ROUNDEDCORNERS', [4,4,4,4]),
+    # Destaque na coluna de Total Vendas Posto (primeira)
+    ('LINEBELOW', (0,0),(0,0), 2, C_ACCENT),
 ])
 kpi_table = Table(kpis, colWidths=[W/4]*4)
 kpi_table.setStyle(kpi_style)
 story.append(kpi_table)
+
+# Linha 2 de KPIs: vendas por categoria de funcionário
+frentistas_all = [f for f in d['funcionarios'] if f['tipo'] == 'frentista']
+trocadores_all = [f for f in d['funcionarios'] if f['tipo'] == 'trocador']
+gerentes_all   = [f for f in d['funcionarios'] if f['tipo'] == 'gerente']
+
+total_vend_frent = sum(float(f['total_vendas'] or 0) for f in frentistas_all)
+total_vend_troc  = sum(float(f['total_vendas'] or 0) for f in trocadores_all)
+total_vend_ger   = sum(float(f['total_vendas'] or 0) for f in gerentes_all)
+
+kpis2 = [
+    ['Vendas Frentistas', 'Vendas Trocadores', 'Vendas Gerentes', 'Funcionários'],
+    [
+        Paragraph(brl(total_vend_frent), S('kv5', fontSize=10, fontName='Helvetica-Bold', textColor=C_TEXT, alignment=TA_CENTER)),
+        Paragraph(brl(total_vend_troc),  S('kv6', fontSize=10, fontName='Helvetica-Bold', textColor=C_AMBER, alignment=TA_CENTER)),
+        Paragraph(brl(total_vend_ger),   S('kv7', fontSize=10, fontName='Helvetica-Bold', textColor=C_ACCENT, alignment=TA_CENTER)),
+        Paragraph(str(len(d['funcionarios'])), S('kv8', fontSize=10, fontName='Helvetica-Bold', textColor=C_MUTED, alignment=TA_CENTER)),
+    ]
+]
+kpi2_style = TableStyle([
+    ('BACKGROUND', (0,0),(-1,0), C_SURF2),
+    ('BACKGROUND', (0,1),(-1,1), C_SURF),
+    ('TEXTCOLOR', (0,0),(-1,0), C_MUTED),
+    ('FONTNAME', (0,0),(-1,0), 'Helvetica'),
+    ('FONTSIZE', (0,0),(-1,0), 7),
+    ('ALIGN', (0,0),(-1,-1), 'CENTER'),
+    ('TOPPADDING', (0,0),(-1,-1), 6),
+    ('BOTTOMPADDING', (0,0),(-1,-1), 6),
+    ('GRID', (0,0),(-1,-1), 0.5, C_BORD),
+])
+kpi2_table = Table(kpis2, colWidths=[W/4]*4)
+kpi2_table.setStyle(kpi2_style)
+story.append(Spacer(1, 4))
+story.append(kpi2_table)
 story.append(Spacer(1, 10))
 
 # ── Separa funcionários ───────────────────────────────────────────────────────
-frentistas = [f for f in d['funcionarios'] if f['tipo'] == 'frentista']
-trocadores = [f for f in d['funcionarios'] if f['tipo'] == 'trocador']
-gerentes   = [f for f in d['funcionarios'] if f['tipo'] == 'gerente']
+frentistas = frentistas_all
+trocadores = trocadores_all
+gerentes   = gerentes_all
 
 # ── Função para tabela de frentistas/trocadores ───────────────────────────────
 def tabela_frent_troc(lista, titulo, meta_ef, meta_orig, pro_rata):
@@ -248,9 +288,10 @@ def tabela_frent_troc(lista, titulo, meta_ef, meta_orig, pro_rata):
     story.append(Paragraph(meta_txt, sMuted))
     story.append(Spacer(1, 4))
 
+    # MODIFICADO: coluna "Total Vendido" destacada (negrito + cor) como 2ª coluna
     header = [
         Paragraph('Funcionário', sCenterB),
-        Paragraph('Total Vendas', sCenterB),
+        Paragraph('Total Vendido', sCenterB),   # ← destaque individual
         Paragraph('Meta Efetiva', sCenterB),
         Paragraph('% Meta', sCenterB),
         Paragraph('Taxa', sCenterB),
@@ -267,9 +308,15 @@ def tabela_frent_troc(lista, titulo, meta_ef, meta_orig, pro_rata):
         )
         p_meta = float(f['pct_meta'] or 0)
         cor_pct = C_GREEN if p_meta >= 1 else (C_AMBER if p_meta >= 0.75 else C_RED)
+
+        # Total vendido individual — negrito e cor de destaque
+        tv = float(f['total_vendas'] or 0)
+        tv_style = S('tv', fontSize=8, fontName='Helvetica-Bold',
+                     textColor=C_GREEN if tv > 0 else C_MUTED, alignment=TA_RIGHT)
+
         rows.append([
             nome_p,
-            Paragraph(brl(f['total_vendas']), sRight),
+            Paragraph(brl(tv), tv_style),          # ← valor individual destacado
             Paragraph(brl(f['meta_efetiva']), sRight),
             Paragraph(f"{p_meta*100:.1f}%", S('pp', fontSize=8, fontName='Helvetica-Bold', textColor=cor_pct, alignment=TA_CENTER)),
             Paragraph('0%' if desq else f"{float(f['taxa_comissao'] or 0)*100:.1f}%", sCenter),
@@ -283,19 +330,25 @@ def tabela_frent_troc(lista, titulo, meta_ef, meta_orig, pro_rata):
                 '', '', '', '', '', '', ''
             ])
 
-    # Footer
-    tot_faixa = sum(float(f['comissao_faixa'] or 0) for f in lista if not f['desqualificado'])
-    tot_esp   = sum(float(f['comissao_especiais'] or 0) for f in lista if not f['desqualificado'])
-    tot_total = sum(float(f['total_comissao'] or 0) for f in lista)
+    # Footer com subtotais
+    tot_vendas = sum(float(f['total_vendas'] or 0) for f in lista)
+    tot_faixa  = sum(float(f['comissao_faixa'] or 0) for f in lista if not f['desqualificado'])
+    tot_esp    = sum(float(f['comissao_especiais'] or 0) for f in lista if not f['desqualificado'])
+    tot_total  = sum(float(f['total_comissao'] or 0) for f in lista)
     rows.append([
         Paragraph('SUBTOTAL', sBold),
-        '', '', '', '',
+        Paragraph(brl(tot_vendas), sRightB),   # ← subtotal de vendas
+        '', '', '',
         Paragraph(brl(tot_faixa), sRightB),
         Paragraph(brl(tot_esp), sRightB),
         Paragraph(brl(tot_total), sRightG),
     ])
 
-    cw = [W*0.26, W*0.11, W*0.11, W*0.09, W*0.08, W*0.11, W*0.12, W*0.12]
+    cw = [W*0.24, W*0.12, W*0.10, W*0.08, W*0.07, W*0.11, W*0.12, W*0.12] # = 0.96, ajuste fino
+    # Normaliza para W exato
+    total_cw = sum(cw)
+    cw = [c * W / total_cw for c in cw]
+
     t = Table(rows, colWidths=cw, repeatRows=1)
     ts = TableStyle([
         ('BACKGROUND', (0,0),(-1,0), C_SURF2),
@@ -307,7 +360,8 @@ def tabela_frent_troc(lista, titulo, meta_ef, meta_orig, pro_rata):
         ('LEFTPADDING', (0,0),(-1,-1), 4),
         ('RIGHTPADDING', (0,0),(-1,-1), 4),
         ('VALIGN', (0,0),(-1,-1), 'MIDDLE'),
-        ('SPAN', (1,-1),(6,-1)),
+        # Linha de destaque na coluna "Total Vendido" (col 1)
+        ('LINEAFTER', (1,0),(1,-1), 1, C_BORD),
     ])
     # Zebra
     for i in range(1, len(rows)-1):
@@ -329,8 +383,10 @@ if gerentes:
     story.append(Paragraph(meta_posto_txt, sMuted))
     story.append(Spacer(1, 4))
 
+    # MODIFICADO: adicionada coluna "Total Vendido" para gerentes
     hdr_g = [
         Paragraph('Gerente', sCenterB),
+        Paragraph('Total Vendido', sCenterB),   # ← novo
         Paragraph('Com. Prop. Frent.', sCenterB),
         Paragraph('Com. Prop. Troc.', sCenterB),
         Paragraph('3% Posto', sCenterB),
@@ -347,8 +403,20 @@ if gerentes:
             f"<strike>{f['nome']}</strike>" if desq else f['nome'],
             S('gn', fontSize=7, fontName='Helvetica', textColor=C_RED if desq else C_TEXT)
         )
+
+        # Total vendido = vendasPropFrentista + vendasPropTrocador
+        tv_frent = float(f.get('vendas_prop_frentista') or f.get('total_prop_frent') or 0)
+        tv_troc  = float(f.get('vendas_prop_trocador')  or f.get('total_prop_troc')  or 0)
+        # Se total_vendas existe e é maior (fallback)
+        tv_total_raw = float(f.get('total_vendas') or 0)
+        tv_ger = tv_frent + tv_troc if (tv_frent + tv_troc) > 0 else tv_total_raw
+
+        tv_style_g = S('tvg', fontSize=8, fontName='Helvetica-Bold',
+                       textColor=C_GREEN if tv_ger > 0 else C_MUTED, alignment=TA_RIGHT)
+
         rows_g.append([
             nome_p,
+            Paragraph(brl(tv_ger), tv_style_g),   # ← total vendido individual
             Paragraph(brl(0 if desq else f['total_prop_frent']), sRight),
             Paragraph(brl(0 if desq else f['total_prop_troc']), sRight),
             Paragraph(
@@ -360,12 +428,26 @@ if gerentes:
             Paragraph(brl(f['total_comissao']), sRightR if desq else sRightG),
         ])
         if desq and f['motivo_desq']:
-            rows_g.append([Paragraph(f"  ↳ {f['motivo_desq']}", sRed), '','','','','',''])
+            rows_g.append([Paragraph(f"  ↳ {f['motivo_desq']}", sRed), '','','','','','',''])
 
+    # Subtotal gerentes
+    tot_tv_g = sum(
+        (float(f.get('vendas_prop_frentista') or 0) + float(f.get('vendas_prop_trocador') or 0))
+        or float(f.get('total_vendas') or 0)
+        for f in gerentes
+    )
     tot_g = sum(float(f['total_comissao'] or 0) for f in gerentes)
-    rows_g.append([Paragraph('SUBTOTAL', sBold), '','','','','', Paragraph(brl(tot_g), sRightG)])
+    rows_g.append([
+        Paragraph('SUBTOTAL', sBold),
+        Paragraph(brl(tot_tv_g), sRightB),
+        '','','','','',
+        Paragraph(brl(tot_g), sRightG)
+    ])
 
-    cw_g = [W*0.24, W*0.13, W*0.13, W*0.13, W*0.13, W*0.12, W*0.12]
+    cw_g = [W*0.20, W*0.12, W*0.12, W*0.11, W*0.11, W*0.11, W*0.11, W*0.12]
+    total_cw_g = sum(cw_g)
+    cw_g = [c * W / total_cw_g for c in cw_g]
+
     tg = Table(rows_g, colWidths=cw_g, repeatRows=1)
     tgs = TableStyle([
         ('BACKGROUND', (0,0),(-1,0), C_SURF2),
@@ -377,6 +459,7 @@ if gerentes:
         ('LEFTPADDING', (0,0),(-1,-1), 4),
         ('RIGHTPADDING', (0,0),(-1,-1), 4),
         ('VALIGN', (0,0),(-1,-1), 'MIDDLE'),
+        ('LINEAFTER', (1,0),(1,-1), 1, C_BORD),
     ])
     for i in range(1, len(rows_g)-1):
         if i % 2 == 0:
@@ -404,9 +487,10 @@ ft.setStyle(TableStyle([
 story.append(ft)
 
 # ── Rodapé geração ────────────────────────────────────────────────────────────
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+BRT = timezone(timedelta(hours=-3))
 story.append(Spacer(1, 6))
-story.append(Paragraph(f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}", sMuted))
+story.append(Paragraph(f"Gerado em {datetime.now(BRT).strftime('%d/%m/%Y %H:%M')} (Brasília)", sMuted))
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 def on_page(canvas, doc):
@@ -439,12 +523,6 @@ print("OK:" + out)
 }
 
 // ─── Envia documento via Evolution API ───────────────────────────────────────
-//
-// O EVOURL pode estar em dois formatos:
-//   A) URL base:     https://evo2.exemplo.com.br
-//   B) URL completa: https://evo2.exemplo.com.br/message/sendText/INSTANCIA
-//
-// Em ambos os casos extraímos a base e o nome da instância.
 
 function parseEvoConfig() {
   const EVOURL  = process.env.EVOURL;
@@ -454,23 +532,16 @@ function parseEvoConfig() {
     throw new Error('EVOURL e API_KEY devem estar configurados no .env');
   }
 
-  // Tenta extrair instanceName do padrão: /message/sendText/INSTANCIA
-  //                                    ou: /message/sendMedia/INSTANCIA
-  //                                    ou: /INSTANCIA (último segmento)
   const sendMatch = EVOURL.match(/\/message\/send\w+\/([^/?#]+)/);
   let instanceName;
   let baseUrl;
 
   if (sendMatch) {
-    // Formato B — extrai base e instância
     instanceName = sendMatch[1];
-    // base = tudo antes de /message/
     baseUrl = EVOURL.replace(/\/message\/send\w+\/[^/?#]+.*$/, '');
   } else {
-    // Formato A — apenas base URL, instância é o último segmento
     const clean = EVOURL.replace(/\/$/, '');
     const parts = clean.split('/');
-    // Heurística: se o último segmento não parece um path de API, é a instância
     const last = parts[parts.length - 1];
     if (last && !['api', 'v1', 'v2'].includes(last.toLowerCase())) {
       instanceName = last;
@@ -495,7 +566,6 @@ function parseEvoConfig() {
 async function enviarParaGrupo(groupId, pdfPath, caption) {
   const { baseUrl, instanceName, apiKey } = parseEvoConfig();
 
-  // Lê o PDF e converte para base64
   const pdfBuffer = fs.readFileSync(pdfPath);
   const b64       = pdfBuffer.toString('base64');
 
@@ -529,14 +599,12 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
 
 router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
   const periodoId = req.params.periodoId;
-  const { posto_ids } = req.body; // opcional: array de posto IDs para filtrar
+  const { posto_ids } = req.body;
 
-  // Busca período
   const { rows: pRows } = await query('SELECT * FROM periodos WHERE id=$1', [periodoId]);
   if (!pRows.length) return res.status(404).json({ error: 'Período não encontrado' });
   const periodo = pRows[0];
 
-  // Busca postos com grupo WhatsApp configurado
   let postoQuery = 'SELECT * FROM postos WHERE ativo=true AND whatsapp_group_id IS NOT NULL AND TRIM(whatsapp_group_id) != \'\'';
   const postoParams = [];
   if (posto_ids && posto_ids.length) {
@@ -551,7 +619,6 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
     });
   }
 
-  // Busca dados para cálculo
   const [
     { rows: vendas },
     { rows: metas },
@@ -577,7 +644,6 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
 
   const comissoes = calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios, periodo, desqualificados);
 
-  // Pasta temporária para PDFs
   const tmpDir = path.join('/tmp', `whatsapp_${periodoId}_${Date.now()}`);
   fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -597,21 +663,20 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
     const pdfPath = path.join(tmpDir, pdfName);
 
     try {
-      // Gera PDF
       gerarPDFScript(posto, periodo.nome, dadosPosto, pdfPath);
 
-      // Monta caption
       const pctPosto   = dadosPosto.pctMetaPosto || 0;
       const totalCom   = dadosPosto.totalComissoes || 0;
+      const totalVend  = dadosPosto.totalVendasPosto || 0;
       const emoji      = pctPosto >= 1 ? '✅' : pctPosto >= 0.75 ? '⚠️' : '❌';
       const caption    =
         `${emoji} *Relatório de Comissões*\n` +
         `📍 ${posto.codigo} — ${posto.nome}\n` +
         `📅 ${periodo.nome}\n` +
+        `🛒 Total vendido: *${fmt(totalVend)}*\n` +
         `📊 Atingimento: *${(pctPosto * 100).toFixed(1)}%* da meta\n` +
         `💰 Total comissões: *${fmt(totalCom)}*`;
 
-      // Envia
       await enviarParaGrupo(posto.whatsapp_group_id, pdfPath, caption);
       resultados.push({ posto: posto.codigo, nome: posto.nome, status: 'enviado', total: totalCom });
     } catch (e) {
@@ -622,7 +687,6 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
     }
   }
 
-  // Remove pasta temp
   try { fs.rmdirSync(tmpDir); } catch {}
 
   res.json({
@@ -636,7 +700,7 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
   });
 });
 
-// ─── Preview PDF (gera e retorna o arquivo) ───────────────────────────────────
+// ─── Preview PDF ──────────────────────────────────────────────────────────────
 
 router.get('/preview/:periodoId/:postoId', auth, async (req, res) => {
   const { periodoId, postoId } = req.params;
@@ -682,9 +746,8 @@ router.get('/preview/:periodoId/:postoId', auth, async (req, res) => {
   }
 });
 
+// ─── Diagnóstico ──────────────────────────────────────────────────────────────
 
-// ─── Diagnóstico (admin only) ─────────────────────────────────────────────────
-// GET /api/whatsapp/diagnostico
 router.get('/diagnostico', auth, adminOnly, async (req, res) => {
   const EVOURL  = process.env.EVOURL;
   const API_KEY = process.env.API_KEY;
