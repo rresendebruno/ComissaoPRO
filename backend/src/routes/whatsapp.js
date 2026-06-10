@@ -538,14 +538,20 @@ function getZApiConfig() {
 }
 
 // ─── Rota temporária para Z-API buscar o PDF via link ────────────────────────
-// A URL inclui o nome do arquivo com .pdf para Z-API usar como filename
 
 router.get('/temp/:token/:filename', (req, res) => {
   const filePath = tempFiles.get(req.params.token);
-  if (!filePath || !fs.existsSync(filePath)) return res.status(404).send('Not found');
+  if (!filePath || !fs.existsSync(filePath)) {
+    console.log(`[WhatsApp Z-API] Temp 404: token=${req.params.token}`);
+    return res.status(404).send('Not found');
+  }
+  console.log(`[WhatsApp Z-API] Servindo arquivo para Z-API: ${req.params.filename}`);
+  tempFiles.delete(req.params.token);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${req.params.filename}"`);
-  fs.createReadStream(filePath).pipe(res);
+  const stream = fs.createReadStream(filePath);
+  stream.on('end', () => { try { fs.unlinkSync(filePath); } catch {} });
+  stream.pipe(res);
 });
 
 async function enviarParaGrupo(groupId, pdfPath, caption) {
@@ -561,6 +567,16 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
   if (isPublicUrl) {
     token = crypto.randomBytes(16).toString('hex');
     tempFiles.set(token, pdfPath);
+
+    // Auto-limpeza após 5 minutos se Z-API não buscar
+    setTimeout(() => {
+      if (tempFiles.has(token)) {
+        tempFiles.delete(token);
+        try { fs.unlinkSync(pdfPath); } catch {}
+        console.log(`[WhatsApp Z-API] Arquivo expirado sem ser buscado: ${path.basename(pdfPath)}`);
+      }
+    }, 300000);
+
     const fileName = path.basename(pdfPath);
     const fileUrl  = `${PUBLIC_URL}/api/whatsapp/temp/${token}/${encodeURIComponent(fileName)}`;
     url     = `${baseUrl}/send-document/link`;
@@ -579,16 +595,10 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
       timeout: 60000,
     });
     console.log(`[WhatsApp Z-API] Resposta (${resp.status}):`, JSON.stringify(resp.data));
-
-    if (token) {
-      // Aguarda Z-API buscar o arquivo antes de liberar para deleção
-      await new Promise(resolve => setTimeout(resolve, 8000));
-      tempFiles.delete(token);
-    }
-
-    return resp.data;
+    // Para link: arquivo fica vivo até a rota /temp servir. Retorna flag para o caller não deletar.
+    return { data: resp.data, usedLink: !!token };
   } catch (e) {
-    if (token) tempFiles.delete(token);
+    if (token) { tempFiles.delete(token); }
     const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
     console.error(`[WhatsApp Z-API] Erro ao enviar para ${groupId}:`, detail);
     throw new Error(`Z-API recusou o envio: ${detail}`);
@@ -677,12 +687,12 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
         `📊 Atingimento: *${(pctPosto * 100).toFixed(1)}%* da meta\n` +
         `💰 Total comissões: *${fmt(totalCom)}*`;
 
-      await enviarParaGrupo(posto.whatsapp_group_id, pdfPath, caption);
+      const { usedLink } = await enviarParaGrupo(posto.whatsapp_group_id, pdfPath, caption);
       resultados.push({ posto: posto.codigo, nome: posto.nome, status: 'enviado', total: totalCom });
+      if (!usedLink) try { fs.unlinkSync(pdfPath); } catch {}
     } catch (e) {
       console.error(`Erro no posto ${posto.codigo}:`, e.message);
       erros.push({ posto: posto.codigo, nome: posto.nome, erro: e.message });
-    } finally {
       try { fs.unlinkSync(pdfPath); } catch {}
     }
 
