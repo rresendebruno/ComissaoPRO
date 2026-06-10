@@ -565,8 +565,13 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
   pendingFiles[token] = { filePath: pdfPath, fileName };
   setTimeout(() => delete pendingFiles[token], 300_000); // limpa após 5 min
 
+  // Z-API usa formato @g.us para grupos; Evolution API usa sufixo -group
+  const phone = groupId.endsWith('-group')
+    ? groupId.replace(/-group$/, '@g.us')
+    : groupId;
+
   const documentUrl = `${PUBLIC_URL}/api/whatsapp/pdf/${token}`;
-  const payload = { phone: groupId, document: documentUrl, fileName, caption };
+  const payload = { phone, document: documentUrl, fileName, caption };
 
   const url = `${baseUrl}/send-document/link`;
   console.log(`[WhatsApp] Enviando para "${groupId}" via Z-API link: ${documentUrl}`);
