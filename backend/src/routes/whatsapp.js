@@ -10,9 +10,13 @@ const router   = require('express').Router();
 const axios    = require('axios');
 const path     = require('path');
 const fs       = require('fs');
+const crypto   = require('crypto');
 const { query }           = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const { calcularComissoes } = require('../comissoes');
+
+// Mapa de tokens → caminhos de PDF temporários para envio via link
+const tempFiles = new Map();
 
 // ─── Helpers de formatação ────────────────────────────────────────────────────
 
@@ -522,76 +526,70 @@ print("OK:" + out)
   }
 }
 
-// ─── Envia documento via Evolution API ───────────────────────────────────────
+// ─── Envia documento via Z-API ───────────────────────────────────────────────
 
-function parseEvoConfig() {
-  const EVOURL  = process.env.EVOURL;
-  const API_KEY = process.env.API_KEY;
-
-  if (!EVOURL || !API_KEY) {
-    throw new Error('EVOURL e API_KEY devem estar configurados no .env');
+function getZApiConfig() {
+  const { ID_INSTANCIA, TOKEN_INSTANCIA, CLIENT_TOKEN } = process.env;
+  if (!ID_INSTANCIA || !TOKEN_INSTANCIA || !CLIENT_TOKEN) {
+    throw new Error('ID_INSTANCIA, TOKEN_INSTANCIA e CLIENT_TOKEN devem estar configurados no .env');
   }
-
-  const sendMatch = EVOURL.match(/\/message\/send\w+\/([^/?#]+)/);
-  let instanceName;
-  let baseUrl;
-
-  if (sendMatch) {
-    instanceName = sendMatch[1];
-    baseUrl = EVOURL.replace(/\/message\/send\w+\/[^/?#]+.*$/, '');
-  } else {
-    const clean = EVOURL.replace(/\/$/, '');
-    const parts = clean.split('/');
-    const last = parts[parts.length - 1];
-    if (last && !['api', 'v1', 'v2'].includes(last.toLowerCase())) {
-      instanceName = last;
-      baseUrl = parts.slice(0, -1).join('/');
-    } else {
-      instanceName = null;
-      baseUrl = clean;
-    }
-  }
-
-  if (!instanceName) {
-    throw new Error(
-      'Não foi possível extrair o nome da instância do EVOURL. ' +
-      'Use o formato: https://seu-servidor.com/message/sendText/NOME_INSTANCIA ' +
-      'ou configure EVOINSTANCE separadamente.'
-    );
-  }
-
-  return { baseUrl, instanceName, apiKey: API_KEY };
+  const baseUrl = `https://api.z-api.io/instances/${ID_INSTANCIA}/token/${TOKEN_INSTANCIA}`;
+  return { baseUrl, clientToken: CLIENT_TOKEN };
 }
 
+// ─── Rota temporária para Z-API buscar o PDF via link ────────────────────────
+
+router.get('/temp/:token', (req, res) => {
+  const filePath = tempFiles.get(req.params.token);
+  if (!filePath || !fs.existsSync(filePath)) return res.status(404).send('Not found');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${path.basename(filePath)}"`);
+  fs.createReadStream(filePath).pipe(res);
+});
+
 async function enviarParaGrupo(groupId, pdfPath, caption) {
-  const { baseUrl, instanceName, apiKey } = parseEvoConfig();
+  const { baseUrl, clientToken } = getZApiConfig();
+  const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
 
-  const pdfBuffer = fs.readFileSync(pdfPath);
-  const b64       = pdfBuffer.toString('base64');
+  const isPublicUrl = PUBLIC_URL &&
+    /^https?:\/\//.test(PUBLIC_URL) &&
+    !/localhost|127\.0\.0\.1/.test(PUBLIC_URL);
 
-  const payload = {
-    number:    groupId,
-    mediatype: 'document',
-    mimetype:  'application/pdf',
-    media:     b64,
-    fileName:  path.basename(pdfPath),
-    caption:   caption,
-  };
+  let url, payload, token;
 
-  const url = `${baseUrl}/message/sendMedia/${instanceName}`;
-  console.log(`[WhatsApp] Enviando para ${groupId} via ${url}`);
+  if (isPublicUrl) {
+    token = crypto.randomBytes(16).toString('hex');
+    tempFiles.set(token, pdfPath);
+    const fileUrl = `${PUBLIC_URL}/api/whatsapp/temp/${token}`;
+    url     = `${baseUrl}/send-document/link`;
+    payload = { phone: groupId, document: fileUrl, fileName: path.basename(pdfPath), caption };
+    console.log(`[WhatsApp Z-API] Enviando via link: ${fileUrl}`);
+  } else {
+    const b64 = `data:application/pdf;base64,${fs.readFileSync(pdfPath).toString('base64')}`;
+    url     = `${baseUrl}/send-document/local`;
+    payload = { phone: groupId, document: b64, fileName: path.basename(pdfPath), caption };
+    console.log(`[WhatsApp Z-API] Enviando via base64 para "${groupId}" (nome pode ter .local)`);
+  }
 
   try {
     const resp = await axios.post(url, payload, {
-      headers: { apikey: apiKey, 'Content-Type': 'application/json' },
+      headers: { 'Client-Token': clientToken, 'Content-Type': 'application/json' },
       timeout: 60000,
     });
+    console.log(`[WhatsApp Z-API] Resposta (${resp.status}):`, JSON.stringify(resp.data));
+
+    if (token) {
+      // Aguarda Z-API buscar o arquivo antes de liberar para deleção
+      await new Promise(resolve => setTimeout(resolve, 8000));
+      tempFiles.delete(token);
+    }
+
     return resp.data;
   } catch (e) {
-    const detail = e.response?.data
-      ? JSON.stringify(e.response.data)
-      : e.message;
-    throw new Error(`Evolution API recusou o envio: ${detail}`);
+    if (token) tempFiles.delete(token);
+    const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
+    console.error(`[WhatsApp Z-API] Erro ao enviar para ${groupId}:`, detail);
+    throw new Error(`Z-API recusou o envio: ${detail}`);
   }
 }
 
@@ -685,6 +683,10 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
     } finally {
       try { fs.unlinkSync(pdfPath); } catch {}
     }
+
+    if (postos.indexOf(posto) < postos.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    }
   }
 
   try { fs.rmdirSync(tmpDir); } catch {}
@@ -749,27 +751,31 @@ router.get('/preview/:periodoId/:postoId', auth, async (req, res) => {
 // ─── Diagnóstico ──────────────────────────────────────────────────────────────
 
 router.get('/diagnostico', auth, adminOnly, async (req, res) => {
-  const EVOURL  = process.env.EVOURL;
-  const API_KEY = process.env.API_KEY;
+  const { ID_INSTANCIA, TOKEN_INSTANCIA, CLIENT_TOKEN } = process.env;
 
   const info = {
-    EVOURL_definido:  !!EVOURL,
-    EVOURL_valor:     EVOURL ? EVOURL.substring(0, 50) + (EVOURL.length > 50 ? '...' : '') : null,
-    API_KEY_definido: !!API_KEY,
-    API_KEY_preview:  API_KEY ? API_KEY.substring(0, 6) + '...' : null,
+    ID_INSTANCIA_definido:    !!ID_INSTANCIA,
+    TOKEN_INSTANCIA_definido: !!TOKEN_INSTANCIA,
+    CLIENT_TOKEN_definido:    !!CLIENT_TOKEN,
+    CLIENT_TOKEN_preview:     CLIENT_TOKEN ? CLIENT_TOKEN.substring(0, 6) + '...' : null,
   };
 
-  if (EVOURL && API_KEY) {
-    try {
-      const { baseUrl, instanceName } = parseEvoConfig();
-      info.parse_ok      = true;
-      info.baseUrl       = baseUrl;
-      info.instanceName  = instanceName;
-      info.sendMedia_url = baseUrl + '/message/sendMedia/' + instanceName;
-    } catch (e) {
-      info.parse_ok    = false;
-      info.parse_error = e.message;
-    }
+  const PUBLIC_URL = process.env.PUBLIC_URL;
+  const isPublicUrl = PUBLIC_URL && /^https?:\/\//.test(PUBLIC_URL) && !/localhost|127\.0\.0\.1/.test(PUBLIC_URL);
+  info.PUBLIC_URL_definido = !!PUBLIC_URL;
+  info.PUBLIC_URL_valor    = PUBLIC_URL || null;
+  info.modo_envio = isPublicUrl ? 'link (sem .local no nome)' : 'base64 (nome vem com .local — configure PUBLIC_URL com URL pública para corrigir)';
+
+  try {
+    const { baseUrl } = getZApiConfig();
+    info.zapi_ok           = true;
+    info.baseUrl           = baseUrl;
+    info.send_document_url = PUBLIC_URL
+      ? baseUrl + '/send-document/link'
+      : baseUrl + '/send-document/local';
+  } catch (e) {
+    info.zapi_ok    = false;
+    info.zapi_erro  = e.message;
   }
 
   const { execSync } = require('child_process');
