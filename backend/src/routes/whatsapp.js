@@ -538,12 +538,13 @@ function getZApiConfig() {
 }
 
 // ─── Rota temporária para Z-API buscar o PDF via link ────────────────────────
+// A URL inclui o nome do arquivo com .pdf para Z-API usar como filename
 
-router.get('/temp/:token', (req, res) => {
+router.get('/temp/:token/:filename', (req, res) => {
   const filePath = tempFiles.get(req.params.token);
   if (!filePath || !fs.existsSync(filePath)) return res.status(404).send('Not found');
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${path.basename(filePath)}"`);
+  res.setHeader('Content-Disposition', `inline; filename="${req.params.filename}"`);
   fs.createReadStream(filePath).pipe(res);
 });
 
@@ -560,9 +561,10 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
   if (isPublicUrl) {
     token = crypto.randomBytes(16).toString('hex');
     tempFiles.set(token, pdfPath);
-    const fileUrl = `${PUBLIC_URL}/api/whatsapp/temp/${token}`;
+    const fileName = path.basename(pdfPath);
+    const fileUrl  = `${PUBLIC_URL}/api/whatsapp/temp/${token}/${encodeURIComponent(fileName)}`;
     url     = `${baseUrl}/send-document/link`;
-    payload = { phone: groupId, document: fileUrl, fileName: path.basename(pdfPath), caption };
+    payload = { phone: groupId, document: fileUrl, fileName, caption };
     console.log(`[WhatsApp Z-API] Enviando via link: ${fileUrl}`);
   } else {
     const b64 = `data:application/pdf;base64,${fs.readFileSync(pdfPath).toString('base64')}`;
