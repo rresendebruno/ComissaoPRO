@@ -12575,5 +12575,3 @@ ALTER TABLE ONLY public.vendas
 -- PostgreSQL database dump complete
 --
 
-\unrestrict BmH50P7JXOcqaPOskOq9sg02XPVYPeZW4afopcqkyjnuazZCFQNk4haahX3el6c
-
