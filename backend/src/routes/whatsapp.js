@@ -563,22 +563,17 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
 
   const headers = { 'Client-Token': clientToken, 'Content-Type': 'application/json' };
 
-  // 1. Serve o PDF temporariamente e envia via link
-  const token    = require('crypto').randomBytes(16).toString('hex');
-  const fileName = path.basename(pdfPath);
-  pendingFiles[token] = { filePath: pdfPath, fileName };
-  setTimeout(() => {
-    try { fs.unlinkSync(pdfPath); } catch {}
-    delete pendingFiles[token];
-  }, 300_000);
+  // Envia via base64 com campo 'extension' para forçar extensão correta
+  const fileName  = path.basename(pdfPath);
+  const b64       = fs.readFileSync(pdfPath).toString('base64');
+  const document  = `data:application/pdf;base64,${b64}`;
 
-  const documentUrl = `${PUBLIC_URL}/api/whatsapp/pdf/${token}/${encodeURIComponent(fileName)}`;
-  console.log(`[WhatsApp] Enviando PDF para "${groupId}": ${documentUrl}`);
+  console.log(`[WhatsApp] Enviando PDF para "${groupId}" via Z-API base64`);
 
   const docResp = await axios.post(
-    `${baseUrl}/send-document/link`,
-    { phone: groupId, document: documentUrl, fileName },
-    { headers, timeout: 60000 },
+    `${baseUrl}/send-document/local`,
+    { phone: groupId, document, fileName, extension: 'pdf', mimeType: 'application/pdf' },
+    { headers, timeout: 120000 },
   ).catch(e => {
     const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
     throw new Error(`Z-API (documento) recusou: ${detail}`);
