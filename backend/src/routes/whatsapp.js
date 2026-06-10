@@ -564,30 +564,10 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
 
   let url, payload, token;
 
-  if (isPublicUrl) {
-    token = crypto.randomBytes(16).toString('hex');
-    tempFiles.set(token, pdfPath);
-
-    // Auto-limpeza após 5 minutos se Z-API não buscar
-    setTimeout(() => {
-      if (tempFiles.has(token)) {
-        tempFiles.delete(token);
-        try { fs.unlinkSync(pdfPath); } catch {}
-        console.log(`[WhatsApp Z-API] Arquivo expirado sem ser buscado: ${path.basename(pdfPath)}`);
-      }
-    }, 300000);
-
-    const fileName = path.basename(pdfPath);
-    const fileUrl  = `${PUBLIC_URL}/api/whatsapp/temp/${token}/${encodeURIComponent(fileName)}`;
-    url     = `${baseUrl}/send-document/link`;
-    payload = { phone: groupId, documentUrl: fileUrl, fileName, mimeType: 'application/pdf', caption };
-    console.log(`[WhatsApp Z-API] Enviando via link: ${fileUrl}`);
-  } else {
-    const b64 = `data:application/pdf;base64,${fs.readFileSync(pdfPath).toString('base64')}`;
-    url     = `${baseUrl}/send-document/local`;
-    payload = { phone: groupId, document: b64, fileName: path.basename(pdfPath), caption };
-    console.log(`[WhatsApp Z-API] Enviando via base64 para "${groupId}" (nome pode ter .local)`);
-  }
+  const b64 = `data:application/pdf;base64,${fs.readFileSync(pdfPath).toString('base64')}`;
+  url     = `${baseUrl}/send-document/local`;
+  payload = { phone: groupId, document: b64, fileName: path.basename(pdfPath), caption };
+  console.log(`[WhatsApp Z-API] Enviando para "${groupId}"`);
 
   try {
     const resp = await axios.post(url, payload, {
@@ -595,10 +575,8 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
       timeout: 60000,
     });
     console.log(`[WhatsApp Z-API] Resposta (${resp.status}):`, JSON.stringify(resp.data));
-    // Para link: arquivo fica vivo até a rota /temp servir. Retorna flag para o caller não deletar.
-    return { data: resp.data, usedLink: !!token };
+    return resp.data;
   } catch (e) {
-    if (token) { tempFiles.delete(token); }
     const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
     console.error(`[WhatsApp Z-API] Erro ao enviar para ${groupId}:`, detail);
     throw new Error(`Z-API recusou o envio: ${detail}`);
@@ -687,12 +665,12 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
         `📊 Atingimento: *${(pctPosto * 100).toFixed(1)}%* da meta\n` +
         `💰 Total comissões: *${fmt(totalCom)}*`;
 
-      const { usedLink } = await enviarParaGrupo(posto.whatsapp_group_id, pdfPath, caption);
+      await enviarParaGrupo(posto.whatsapp_group_id, pdfPath, caption);
       resultados.push({ posto: posto.codigo, nome: posto.nome, status: 'enviado', total: totalCom });
-      if (!usedLink) try { fs.unlinkSync(pdfPath); } catch {}
     } catch (e) {
       console.error(`Erro no posto ${posto.codigo}:`, e.message);
       erros.push({ posto: posto.codigo, nome: posto.nome, erro: e.message });
+    } finally {
       try { fs.unlinkSync(pdfPath); } catch {}
     }
 
