@@ -529,7 +529,9 @@ print("OK:" + out)
 const pendingFiles = {};
 
 // Rota pública (sem auth) — Z-API busca aqui para obter o PDF
-router.get('/pdf/:token', (req, res) => {
+// A URL inclui o nome do arquivo (/pdf/:token/:filename.pdf) para que
+// Z-API use o nome correto no WhatsApp em vez de derivar da URL
+router.get('/pdf/:token/:filename', (req, res) => {
   const entry = pendingFiles[req.params.token];
   if (!entry) return res.status(404).end();
   console.log(`[WhatsApp] Servindo arquivo: ${entry.fileName}`);
@@ -570,7 +572,7 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
     delete pendingFiles[token];
   }, 300_000);
 
-  const documentUrl = `${PUBLIC_URL}/api/whatsapp/pdf/${token}`;
+  const documentUrl = `${PUBLIC_URL}/api/whatsapp/pdf/${token}/${encodeURIComponent(fileName)}`;
   console.log(`[WhatsApp] Enviando PDF para "${groupId}": ${documentUrl}`);
 
   const docResp = await axios.post(
