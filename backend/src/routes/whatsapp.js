@@ -10,13 +10,9 @@ const router   = require('express').Router();
 const axios    = require('axios');
 const path     = require('path');
 const fs       = require('fs');
-const crypto   = require('crypto');
 const { query }           = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const { calcularComissoes } = require('../comissoes');
-
-// Mapa de tokens → caminhos de PDF temporários para envio via link
-const tempFiles = new Map();
 
 // ─── Helpers de formatação ────────────────────────────────────────────────────
 
@@ -526,59 +522,65 @@ print("OK:" + out)
   }
 }
 
-// ─── Envia documento via Z-API ───────────────────────────────────────────────
+// ─── Envia documento via Evolution API ───────────────────────────────────────
+
+// ─── Z-API: serve PDFs temporários para que a Z-API possa buscá-los via link ──
+
+const pendingFiles = {};
+
+// Rota pública (sem auth) — Z-API busca aqui para obter o PDF
+router.get('/pdf/:token', (req, res) => {
+  const entry = pendingFiles[req.params.token];
+  if (!entry) return res.status(404).end();
+  console.log(`[WhatsApp] Servindo arquivo: ${entry.fileName}`);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${entry.fileName}"`);
+  const stream = fs.createReadStream(entry.filePath);
+  stream.on('error', () => res.status(500).end());
+  stream.pipe(res);
+});
 
 function getZApiConfig() {
   const { ID_INSTANCIA, TOKEN_INSTANCIA, CLIENT_TOKEN } = process.env;
   if (!ID_INSTANCIA || !TOKEN_INSTANCIA || !CLIENT_TOKEN) {
-    throw new Error('ID_INSTANCIA, TOKEN_INSTANCIA e CLIENT_TOKEN devem estar configurados no .env');
+    throw new Error('ID_INSTANCIA, TOKEN_INSTANCIA e CLIENT_TOKEN devem estar no .env');
   }
-  const baseUrl = `https://api.z-api.io/instances/${ID_INSTANCIA}/token/${TOKEN_INSTANCIA}`;
-  return { baseUrl, clientToken: CLIENT_TOKEN };
+  return {
+    baseUrl:     `https://api.z-api.io/instances/${ID_INSTANCIA}/token/${TOKEN_INSTANCIA}`,
+    clientToken: CLIENT_TOKEN,
+  };
 }
-
-// ─── Rota temporária para Z-API buscar o PDF via link ────────────────────────
-
-router.get('/temp/:token/:filename', (req, res) => {
-  const filePath = tempFiles.get(req.params.token);
-  if (!filePath || !fs.existsSync(filePath)) {
-    console.log(`[WhatsApp Z-API] Temp 404: token=${req.params.token}`);
-    return res.status(404).send('Not found');
-  }
-  console.log(`[WhatsApp Z-API] Servindo arquivo para Z-API: ${req.params.filename}`);
-  tempFiles.delete(req.params.token);
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${req.params.filename}"`);
-  const stream = fs.createReadStream(filePath);
-  stream.on('end', () => { try { fs.unlinkSync(filePath); } catch {} });
-  stream.pipe(res);
-});
 
 async function enviarParaGrupo(groupId, pdfPath, caption) {
   const { baseUrl, clientToken } = getZApiConfig();
   const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
 
-  const isPublicUrl = PUBLIC_URL &&
-    /^https?:\/\//.test(PUBLIC_URL) &&
-    !/localhost|127\.0\.0\.1/.test(PUBLIC_URL);
+  if (!PUBLIC_URL || /localhost|127\.0\.0\.1/.test(PUBLIC_URL)) {
+    throw new Error('PUBLIC_URL deve ser uma URL pública (ex: https://comissoes.seudominio.com.br)');
+  }
 
-  let url, payload, token;
+  // Gera token aleatório e registra o arquivo para servir à Z-API
+  const token    = require('crypto').randomBytes(16).toString('hex');
+  const fileName = path.basename(pdfPath);
+  pendingFiles[token] = { filePath: pdfPath, fileName };
+  setTimeout(() => delete pendingFiles[token], 300_000); // limpa após 5 min
 
-  const b64 = `data:application/pdf;base64,${fs.readFileSync(pdfPath).toString('base64')}`;
-  url     = `${baseUrl}/send-document/local`;
-  payload = { phone: groupId, document: b64, caption };
-  console.log(`[WhatsApp Z-API] Enviando para "${groupId}"`);
+  const documentUrl = `${PUBLIC_URL}/api/whatsapp/pdf/${token}`;
+  const payload = { phone: groupId, document: documentUrl, fileName, caption };
+
+  const url = `${baseUrl}/send-document/link`;
+  console.log(`[WhatsApp] Enviando para "${groupId}" via Z-API link: ${documentUrl}`);
 
   try {
     const resp = await axios.post(url, payload, {
       headers: { 'Client-Token': clientToken, 'Content-Type': 'application/json' },
       timeout: 60000,
     });
-    console.log(`[WhatsApp Z-API] Resposta (${resp.status}):`, JSON.stringify(resp.data));
+    console.log(`[WhatsApp] Resposta (${resp.status}):`, JSON.stringify(resp.data));
     return resp.data;
   } catch (e) {
     const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
-    console.error(`[WhatsApp Z-API] Erro ao enviar para ${groupId}:`, detail);
+    console.error(`[WhatsApp] Erro ao enviar para ${groupId}:`, detail);
     throw new Error(`Z-API recusou o envio: ${detail}`);
   }
 }
@@ -741,31 +743,20 @@ router.get('/preview/:periodoId/:postoId', auth, async (req, res) => {
 // ─── Diagnóstico ──────────────────────────────────────────────────────────────
 
 router.get('/diagnostico', auth, adminOnly, async (req, res) => {
-  const { ID_INSTANCIA, TOKEN_INSTANCIA, CLIENT_TOKEN } = process.env;
+  const info = {};
 
-  const info = {
-    ID_INSTANCIA_definido:    !!ID_INSTANCIA,
-    TOKEN_INSTANCIA_definido: !!TOKEN_INSTANCIA,
-    CLIENT_TOKEN_definido:    !!CLIENT_TOKEN,
-    CLIENT_TOKEN_preview:     CLIENT_TOKEN ? CLIENT_TOKEN.substring(0, 6) + '...' : null,
-  };
-
-  const PUBLIC_URL = process.env.PUBLIC_URL;
-  const isPublicUrl = PUBLIC_URL && /^https?:\/\//.test(PUBLIC_URL) && !/localhost|127\.0\.0\.1/.test(PUBLIC_URL);
-  info.PUBLIC_URL_definido = !!PUBLIC_URL;
-  info.PUBLIC_URL_valor    = PUBLIC_URL || null;
-  info.modo_envio = isPublicUrl ? 'link (sem .local no nome)' : 'base64 (nome vem com .local — configure PUBLIC_URL com URL pública para corrigir)';
+  const PUBLIC_URL = process.env.PUBLIC_URL || '';
+  info.PUBLIC_URL          = PUBLIC_URL || null;
+  info.PUBLIC_URL_publica  = !!PUBLIC_URL && !/localhost|127\.0\.0\.1/.test(PUBLIC_URL);
+  info.pdf_endpoint        = PUBLIC_URL ? `${PUBLIC_URL}/api/whatsapp/pdf/:token` : null;
 
   try {
     const { baseUrl } = getZApiConfig();
-    info.zapi_ok           = true;
-    info.baseUrl           = baseUrl;
-    info.send_document_url = PUBLIC_URL
-      ? baseUrl + '/send-document/link'
-      : baseUrl + '/send-document/local';
+    info.zapi_ok   = true;
+    info.zapi_url  = `${baseUrl}/send-document/link`;
   } catch (e) {
-    info.zapi_ok    = false;
-    info.zapi_erro  = e.message;
+    info.zapi_ok   = false;
+    info.zapi_erro = e.message;
   }
 
   const { execSync } = require('child_process');
