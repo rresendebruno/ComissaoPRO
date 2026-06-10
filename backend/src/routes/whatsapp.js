@@ -559,35 +559,45 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
     throw new Error('PUBLIC_URL deve ser uma URL pública (ex: https://comissoes.seudominio.com.br)');
   }
 
-  // Gera token aleatório e registra o arquivo para servir à Z-API
+  const headers = { 'Client-Token': clientToken, 'Content-Type': 'application/json' };
+
+  // 1. Serve o PDF temporariamente e envia via link
   const token    = require('crypto').randomBytes(16).toString('hex');
   const fileName = path.basename(pdfPath);
   pendingFiles[token] = { filePath: pdfPath, fileName };
-  setTimeout(() => delete pendingFiles[token], 300_000); // limpa após 5 min
-
-  // Z-API usa formato @g.us para grupos; Evolution API usa sufixo -group
-  const phone = groupId.endsWith('-group')
-    ? groupId.replace(/-group$/, '@g.us')
-    : groupId;
+  setTimeout(() => {
+    try { fs.unlinkSync(pdfPath); } catch {}
+    delete pendingFiles[token];
+  }, 300_000);
 
   const documentUrl = `${PUBLIC_URL}/api/whatsapp/pdf/${token}`;
-  const payload = { phone, document: documentUrl, fileName, caption };
+  console.log(`[WhatsApp] Enviando PDF para "${groupId}": ${documentUrl}`);
 
-  const url = `${baseUrl}/send-document/link`;
-  console.log(`[WhatsApp] Enviando para "${groupId}" via Z-API link: ${documentUrl}`);
-
-  try {
-    const resp = await axios.post(url, payload, {
-      headers: { 'Client-Token': clientToken, 'Content-Type': 'application/json' },
-      timeout: 60000,
-    });
-    console.log(`[WhatsApp] Resposta (${resp.status}):`, JSON.stringify(resp.data));
-    return resp.data;
-  } catch (e) {
+  const docResp = await axios.post(
+    `${baseUrl}/send-document/link`,
+    { phone: groupId, document: documentUrl, fileName },
+    { headers, timeout: 60000 },
+  ).catch(e => {
     const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
-    console.error(`[WhatsApp] Erro ao enviar para ${groupId}:`, detail);
-    throw new Error(`Z-API recusou o envio: ${detail}`);
-  }
+    throw new Error(`Z-API (documento) recusou: ${detail}`);
+  });
+  console.log(`[WhatsApp] PDF enviado (${docResp.status}):`, JSON.stringify(docResp.data));
+
+  // 2. Aguarda 2s e envia o texto com o resumo separado
+  await new Promise(r => setTimeout(r, 2000));
+  console.log(`[WhatsApp] Enviando texto para "${groupId}"`);
+
+  const txtResp = await axios.post(
+    `${baseUrl}/send-text`,
+    { phone: groupId, message: caption },
+    { headers, timeout: 30000 },
+  ).catch(e => {
+    const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
+    throw new Error(`Z-API (texto) recusou: ${detail}`);
+  });
+  console.log(`[WhatsApp] Texto enviado (${txtResp.status}):`, JSON.stringify(txtResp.data));
+
+  return docResp.data;
 }
 
 // ─── Rota Principal ───────────────────────────────────────────────────────────
@@ -677,7 +687,6 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
     } catch (e) {
       console.error(`Erro no posto ${posto.codigo}:`, e.message);
       erros.push({ posto: posto.codigo, nome: posto.nome, erro: e.message });
-    } finally {
       try { fs.unlinkSync(pdfPath); } catch {}
     }
 
