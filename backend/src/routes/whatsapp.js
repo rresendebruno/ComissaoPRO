@@ -524,24 +524,6 @@ print("OK:" + out)
 
 // ─── Envia documento via Evolution API ───────────────────────────────────────
 
-// ─── Z-API: serve PDFs temporários para que a Z-API possa buscá-los via link ──
-
-const pendingFiles = {};
-
-// Rota pública (sem auth) — Z-API busca aqui para obter o PDF
-// A URL inclui o nome do arquivo (/pdf/:token/:filename.pdf) para que
-// Z-API use o nome correto no WhatsApp em vez de derivar da URL
-router.get('/pdf/:token/:filename', (req, res) => {
-  const entry = pendingFiles[req.params.token];
-  if (!entry) return res.status(404).end();
-  console.log(`[WhatsApp] Servindo arquivo: ${entry.fileName}`);
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${entry.fileName}"`);
-  const stream = fs.createReadStream(entry.filePath);
-  stream.on('error', () => res.status(500).end());
-  stream.pipe(res);
-});
-
 function getZApiConfig() {
   const { ID_INSTANCIA, TOKEN_INSTANCIA, CLIENT_TOKEN } = process.env;
   if (!ID_INSTANCIA || !TOKEN_INSTANCIA || !CLIENT_TOKEN) {
@@ -555,44 +537,22 @@ function getZApiConfig() {
 
 async function enviarParaGrupo(groupId, pdfPath, caption) {
   const { baseUrl, clientToken } = getZApiConfig();
-  const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
-
-  if (!PUBLIC_URL || /localhost|127\.0\.0\.1/.test(PUBLIC_URL)) {
-    throw new Error('PUBLIC_URL deve ser uma URL pública (ex: https://comissoes.seudominio.com.br)');
-  }
-
   const headers = { 'Client-Token': clientToken, 'Content-Type': 'application/json' };
 
-  // Envia via base64 com campo 'extension' para forçar extensão correta
-  const fileName  = path.basename(pdfPath);
-  const b64       = fs.readFileSync(pdfPath).toString('base64');
-  const document  = `data:application/pdf;base64,${b64}`;
+  const fileName = path.basename(pdfPath);
+  const b64      = fs.readFileSync(pdfPath).toString('base64');
 
-  console.log(`[WhatsApp] Enviando PDF para "${groupId}" via Z-API base64`);
+  console.log(`[WhatsApp] Enviando PDF para "${groupId}" via Z-API /send-document/pdf`);
 
   const docResp = await axios.post(
-    `${baseUrl}/send-document/local`,
-    { phone: groupId, document, fileName, extension: 'pdf', mimeType: 'application/pdf' },
+    `${baseUrl}/send-document/pdf`,
+    { phone: groupId, document: b64, fileName, caption },
     { headers, timeout: 120000 },
   ).catch(e => {
     const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
     throw new Error(`Z-API (documento) recusou: ${detail}`);
   });
   console.log(`[WhatsApp] PDF enviado (${docResp.status}):`, JSON.stringify(docResp.data));
-
-  // 2. Aguarda 2s e envia o texto com o resumo separado
-  await new Promise(r => setTimeout(r, 2000));
-  console.log(`[WhatsApp] Enviando texto para "${groupId}"`);
-
-  const txtResp = await axios.post(
-    `${baseUrl}/send-text`,
-    { phone: groupId, message: caption },
-    { headers, timeout: 30000 },
-  ).catch(e => {
-    const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
-    throw new Error(`Z-API (texto) recusou: ${detail}`);
-  });
-  console.log(`[WhatsApp] Texto enviado (${txtResp.status}):`, JSON.stringify(txtResp.data));
 
   return docResp.data;
 }
