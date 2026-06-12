@@ -540,7 +540,7 @@ async function enviarParaGrupo(groupId, pdfPath, caption) {
   const headers = { 'Client-Token': clientToken, 'Content-Type': 'application/json' };
 
   const fileName = path.basename(pdfPath);
-  const b64      = fs.readFileSync(pdfPath).toString('base64');
+  const b64      = `data:application/pdf;base64,${fs.readFileSync(pdfPath).toString('base64')}`;
 
   console.log(`[WhatsApp] Enviando PDF para "${groupId}" via Z-API /send-document/pdf`);
 
