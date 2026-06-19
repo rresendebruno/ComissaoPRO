@@ -440,7 +440,7 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.array('arquivo', 50), a
       continue;
     }
 
-    for (let i = 1; i < rows_data.length; i++) {
+    for (let i = 0; i < rows_data.length; i++) {
       const row = rows_data[i];
       if (!row || row.every(c => c === '' || c == null)) continue;
 
