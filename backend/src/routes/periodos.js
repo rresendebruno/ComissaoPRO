@@ -397,7 +397,7 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
 
 // ── IMPORT VIA UPLOAD CSV (coluna B = chave_empresa do posto) ─────────────────
 
-router.post('/:id/importar-csv', auth, adminOnly, upload.single('arquivo'), async (req, res) => {
+router.post('/:id/importar-csv', auth, adminOnly, upload.array('arquivo', 50), async (req, res) => {
   const periodoId = req.params.id;
 
   const { rows: pRows } = await query('SELECT * FROM periodos WHERE id=$1', [periodoId]);
@@ -405,26 +405,12 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.single('arquivo'), asyn
   if (pRows[0].status === 'fechado')
     return res.status(400).json({ error: 'Período fechado. Não é possível importar dados.' });
 
-  if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
-
-  let rows_data;
-  try {
-    const wb  = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const ws  = wb.Sheets[wb.SheetNames[0]];
-    rows_data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-  } catch {
-    return res.status(400).json({ error: 'Não foi possível ler o arquivo. Envie um CSV ou XLSX válido.' });
-  }
-
-  if (!rows_data || rows_data.length < 2)
-    return res.status(400).json({ error: 'Arquivo vazio ou sem dados' });
+  const arquivos = req.files || [];
+  if (!arquivos.length) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
   const { rows: postos } = await query('SELECT * FROM postos WHERE ativo=true AND chave_empresa IS NOT NULL');
-  const { rows: funcsEsp } = await query(
-    'SELECT * FROM periodo_funcionarios WHERE periodo_id=$1', [periodoId]
-  );
+  const { rows: funcsEsp } = await query('SELECT * FROM periodo_funcionarios WHERE periodo_id=$1', [periodoId]);
 
-  // Índice por chave_empresa (normalizada)
   const postoIdx = {};
   for (const p of postos) {
     if (p.chave_empresa) postoIdx[p.chave_empresa.trim().toLowerCase()] = p;
@@ -436,40 +422,53 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.single('arquivo'), asyn
     if (!funcEspIdx[k] || f.tipo === 'gerente') funcEspIdx[k] = f.tipo;
   }
 
-  const vendas = [];
-  let erros = 0;
-
   const toNum = v => parseFloat(String(v ?? '0').replace(/\./g, '').replace(',', '.')) || 0;
 
-  for (let i = 1; i < rows_data.length; i++) {
-    const row = rows_data[i];
-    if (!row || row.every(c => c === '' || c == null)) continue;
+  const vendas = [];
+  let erros = 0;
+  let arquivosLidos = 0;
 
-    // Coluna B (índice 1) = chave_empresa
-    const chave = String(row[1] || '').trim().toLowerCase();
-    const posto = postoIdx[chave];
-    if (!posto) { erros++; continue; }
+  for (const arquivo of arquivos) {
+    let rows_data;
+    try {
+      const wb  = XLSX.read(arquivo.buffer, { type: 'buffer' });
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      rows_data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      arquivosLidos++;
+    } catch {
+      erros++;
+      continue;
+    }
 
-    const nomeFuncionario = String(row[12] || '').trim(); // coluna M
-    if (!nomeFuncionario) { erros++; continue; }
+    for (let i = 1; i < rows_data.length; i++) {
+      const row = rows_data[i];
+      if (!row || row.every(c => c === '' || c == null)) continue;
 
-    const produto         = String(row[13] || '').trim(); // coluna N
-    const quantidade      = toNum(row[14]);               // coluna O
-    const valor_unitario  = toNum(row[15]);               // coluna P
-    const valor_bruto     = toNum(row[16]);               // coluna Q
-    const valor_desconto  = toNum(row[17]);               // coluna R
-    const valor_acrescimo = toNum(row[18]);               // coluna S
-    const valor_final     = toNum(row[19]);               // coluna T
+      const chave = String(row[1] || '').trim().toLowerCase();
+      const posto = postoIdx[chave];
+      if (!posto) { erros++; continue; }
 
-    const funcKey = `${posto.id}|${nomeFuncionario.toLowerCase()}`;
-    const tipo    = funcEspIdx[funcKey] || 'frentista';
+      const nomeFuncionario = String(row[12] || '').trim(); // coluna M
+      if (!nomeFuncionario) { erros++; continue; }
 
-    vendas.push([periodoId, posto.id, nomeFuncionario, tipo, produto,
-                 quantidade, valor_unitario, valor_bruto, valor_desconto, valor_acrescimo, valor_final]);
+      const produto         = String(row[13] || '').trim(); // coluna N
+      const quantidade      = toNum(row[14]);               // coluna O
+      const valor_unitario  = toNum(row[15]);               // coluna P
+      const valor_bruto     = toNum(row[16]);               // coluna Q
+      const valor_desconto  = toNum(row[17]);               // coluna R
+      const valor_acrescimo = toNum(row[18]);               // coluna S
+      const valor_final     = toNum(row[19]);               // coluna T
+
+      const funcKey = `${posto.id}|${nomeFuncionario.toLowerCase()}`;
+      const tipo    = funcEspIdx[funcKey] || 'frentista';
+
+      vendas.push([periodoId, posto.id, nomeFuncionario, tipo, produto,
+                   quantidade, valor_unitario, valor_bruto, valor_desconto, valor_acrescimo, valor_final]);
+    }
   }
 
   if (!vendas.length)
-    return res.status(400).json({ error: `Nenhuma venda válida encontrada. Verifique se a coluna B do CSV corresponde à Chave Empresa cadastrada nos postos. ${erros} linhas ignoradas.` });
+    return res.status(400).json({ error: `Nenhuma venda válida encontrada em ${arquivosLidos} arquivo(s). Verifique se a coluna B corresponde à Chave Empresa cadastrada nos postos. ${erros} linhas ignoradas.` });
 
   await query('DELETE FROM vendas WHERE periodo_id=$1', [periodoId]);
 
@@ -494,7 +493,7 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.single('arquivo'), asyn
     success: true,
     imported: vendas.length,
     skipped: erros,
-    message: `${vendas.length} vendas importadas com sucesso${erros > 0 ? `. ${erros} linhas ignoradas` : ''}`
+    message: `${vendas.length} vendas importadas de ${arquivosLidos} arquivo(s)${erros > 0 ? `. ${erros} linhas ignoradas` : ''}`
   });
 });
 

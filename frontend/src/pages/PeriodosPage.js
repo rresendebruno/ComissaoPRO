@@ -462,12 +462,12 @@ export default function PeriodosPage() {
     setShowWppModal(true);
   };
 
-  const handleCsvUpload = async (periodo, file) => {
+  const handleCsvUpload = async (periodo, files) => {
     setCsvPeriodo(periodo);
     setCsvLoading(true);
     setCsvResult(null);
     const fd = new FormData();
-    fd.append('arquivo', file);
+    for (const f of files) fd.append('arquivo', f);
     try {
       const r = await axios.post(`${API}/periodos/${periodo.id}/importar-csv`, fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -566,8 +566,9 @@ export default function PeriodosPage() {
                                     <input
                                       type="file"
                                       accept=".csv,.xlsx,.xls"
+                                      multiple
                                       style={{ display: 'none' }}
-                                      onChange={e => { if (e.target.files[0]) { handleCsvUpload(p, e.target.files[0]); e.target.value = ''; } }}
+                                      onChange={e => { if (e.target.files.length) { handleCsvUpload(p, e.target.files); e.target.value = ''; } }}
                                     />
                                   </label>
                                 )}

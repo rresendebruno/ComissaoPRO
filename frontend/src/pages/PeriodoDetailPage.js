@@ -116,10 +116,10 @@ export default function PeriodoDetailPage() {
   useEffect(() => { if (tab === 'desqualificados') loadTodosFuncionarios(); }, [tab, loadTodosFuncionarios]);
 
   // ── Import CSV
-  const doImportCsv = async (file) => {
+  const doImportCsv = async (files) => {
     setImporting(true); setImportResult(null);
     const fd = new FormData();
-    fd.append('arquivo', file);
+    for (const f of files) fd.append('arquivo', f);
     try {
       const r = await axios.post(`${API}/periodos/${id}/importar-csv`, fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -487,8 +487,9 @@ export default function PeriodoDetailPage() {
                     <input
                       type="file"
                       accept=".csv,.xlsx,.xls"
+                      multiple
                       disabled={importing}
-                      onChange={e => { if (e.target.files[0]) { doImportCsv(e.target.files[0]); e.target.value = ''; } }}
+                      onChange={e => { if (e.target.files.length) { doImportCsv(e.target.files); e.target.value = ''; } }}
                     />
                     <div className="form-hint">
                       Coluna B deve conter a <strong>Chave Empresa</strong> cadastrada no posto.
