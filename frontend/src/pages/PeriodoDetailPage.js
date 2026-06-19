@@ -36,7 +36,6 @@ export default function PeriodoDetailPage() {
 
   // Import
   const [importing, setImporting] = useState(false);
-  const [importUrl, setImportUrl] = useState('');
   const [importResult, setImportResult] = useState(null);
 
   // Meta modal
@@ -79,7 +78,6 @@ export default function PeriodoDetailPage() {
       setMetas(r2.data);
       setPostos(r3.data);
       setFuncionarios(r4.data);
-      setImportUrl(r1.data.sheets_url || '');
     }).finally(() => setLoading(false));
   }, [id]);
 
@@ -117,11 +115,15 @@ export default function PeriodoDetailPage() {
   useEffect(() => { if (tab === 'vendas') { loadVendas(); loadProdutosEspeciais(); } }, [tab, loadVendas, loadProdutosEspeciais]);
   useEffect(() => { if (tab === 'desqualificados') loadTodosFuncionarios(); }, [tab, loadTodosFuncionarios]);
 
-  // ── Import
-  const doImport = async () => {
+  // ── Import CSV
+  const doImportCsv = async (file) => {
     setImporting(true); setImportResult(null);
+    const fd = new FormData();
+    fd.append('arquivo', file);
     try {
-      const r = await axios.post(`${API}/periodos/${id}/importar`, { sheets_url: importUrl || undefined });
+      const r = await axios.post(`${API}/periodos/${id}/importar-csv`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
       setImportResult({ ok: true, msg: r.data.message });
       load();
       if (tab === 'vendas') loadVendas();
@@ -471,25 +473,34 @@ export default function PeriodoDetailPage() {
           <div className="card">
             <div className="card-header">
               <div>
-                <div className="card-title">Importar Vendas do Google Sheets</div>
-                <div className="card-sub">Colunas: A=Posto · B=Funcionário · C=Produto · D=Qtde · E=Vl.Unit · F=Vl.Bruto · G=Desconto · H=Acréscimo · I=Vl.Final</div>
+                <div className="card-title">Importar Vendas via CSV</div>
+                <div className="card-sub">B=Chave Empresa · M=Funcionário · N=Produto · O=Qtde · P=Vl.Unit · Q=Vl.Bruto · R=Desconto · S=Acréscimo · T=Vl.Final</div>
               </div>
             </div>
             <div className="card-body">
-              <div className="form-group">
-                <label>URL da Planilha Google Sheets</label>
-                <input placeholder="https://docs.google.com/spreadsheets/d/…" value={importUrl} onChange={e => setImportUrl(e.target.value)} />
-                <div className="form-hint">Compartilhar → "Qualquer pessoa com o link" → copie a URL</div>
-              </div>
-              {importResult && (
-                <div className={`alert ${importResult.ok ? 'alert-success' : 'alert-error'}`}>{importResult.msg}</div>
+              {periodo?.status === 'fechado' ? (
+                <div className="alert alert-error">Período fechado — importação bloqueada.</div>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label>Arquivo CSV ou XLSX</label>
+                    <input
+                      type="file"
+                      accept=".csv,.xlsx,.xls"
+                      disabled={importing}
+                      onChange={e => { if (e.target.files[0]) { doImportCsv(e.target.files[0]); e.target.value = ''; } }}
+                    />
+                    <div className="form-hint">
+                      Coluna B deve conter a <strong>Chave Empresa</strong> cadastrada no posto.
+                      Os dados anteriores serão substituídos.
+                    </div>
+                  </div>
+                  {importing && <div className="alert" style={{ background: 'var(--surface2)' }}>⟳ Importando…</div>}
+                  {importResult && (
+                    <div className={`alert ${importResult.ok ? 'alert-success' : 'alert-error'}`}>{importResult.msg}</div>
+                  )}
+                </>
               )}
-              <button className="btn btn-primary" onClick={doImport} disabled={importing || !importUrl}>
-                {importing ? '⟳ Importando…' : '↓ Importar Vendas'}
-              </button>
-              <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
-                ⚠️ A importação substitui todas as vendas existentes deste período.
-              </div>
             </div>
           </div>
         )}

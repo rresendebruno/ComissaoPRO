@@ -530,7 +530,6 @@ export default function PeriodosPage() {
                       <th>Período</th>
                       <th>Data Início</th>
                       <th>Data Fim</th>
-                      <th>Planilha</th>
                       <th>Status</th>
                       <th></th>
                     </tr>
@@ -541,11 +540,6 @@ export default function PeriodosPage() {
                         <td style={{ fontWeight: 600 }}>{p.nome}</td>
                         <td className="mono">{new Date(p.data_inicio).toLocaleDateString('pt-BR')}</td>
                         <td className="mono">{new Date(p.data_fim).toLocaleDateString('pt-BR')}</td>
-                        <td>
-                          {p.sheets_url
-                            ? <span className="badge badge-green">✓ Vinculada</span>
-                            : <span className="badge badge-gray">Sem planilha</span>}
-                        </td>
                         <td>
                           <span className={`badge ${statusColor(p.status)}`}>
                             {p.status === 'ativo' ? 'Aberto' : 'Fechado'}
@@ -629,16 +623,6 @@ export default function PeriodosPage() {
                 <input type="date" value={form.data_fim} onChange={e => setForm({ ...form, data_fim: e.target.value })} />
               </div>
             </div>
-            <div className="form-group">
-              <label>URL da Planilha Google Sheets (opcional)</label>
-              <input
-                placeholder="https://docs.google.com/spreadsheets/d/..."
-                value={form.sheets_url}
-                onChange={e => setForm({ ...form, sheets_url: e.target.value })}
-              />
-              <div className="form-hint">Cole o link de compartilhamento. A planilha deve estar pública para leitura.</div>
-            </div>
-
             {/* Preview de replicação — só mostra se há períodos anteriores */}
             {periodos.length > 0 && (
               <div style={{
@@ -681,14 +665,6 @@ export default function PeriodosPage() {
                 <label>Data Fim</label>
                 <input type="date" value={editForm.data_fim} onChange={e => setEditForm({ ...editForm, data_fim: e.target.value })} />
               </div>
-            </div>
-            <div className="form-group">
-              <label>URL da Planilha Google Sheets</label>
-              <input
-                placeholder="https://docs.google.com/spreadsheets/d/..."
-                value={editForm.sheets_url}
-                onChange={e => setEditForm({ ...editForm, sheets_url: e.target.value })}
-              />
             </div>
             <div className="form-group">
               <label>Status</label>

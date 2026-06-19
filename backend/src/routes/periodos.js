@@ -439,25 +439,27 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.single('arquivo'), asyn
   const vendas = [];
   let erros = 0;
 
+  const toNum = v => parseFloat(String(v ?? '0').replace(/\./g, '').replace(',', '.')) || 0;
+
   for (let i = 1; i < rows_data.length; i++) {
     const row = rows_data[i];
     if (!row || row.every(c => c === '' || c == null)) continue;
 
     // Coluna B (índice 1) = chave_empresa
-    const chave          = String(row[1] || '').trim().toLowerCase();
-    const posto          = postoIdx[chave];
+    const chave = String(row[1] || '').trim().toLowerCase();
+    const posto = postoIdx[chave];
     if (!posto) { erros++; continue; }
 
-    const nomeFuncionario = String(row[2] || '').trim();  // coluna C
+    const nomeFuncionario = String(row[12] || '').trim(); // coluna M
     if (!nomeFuncionario) { erros++; continue; }
 
-    const produto         = String(row[3]  || '').trim();
-    const quantidade      = parseFloat(String(row[4]  || '0').replace(',', '.')) || 0;
-    const valor_unitario  = parseFloat(String(row[5]  || '0').replace(',', '.')) || 0;
-    const valor_bruto     = parseFloat(String(row[6]  || '0').replace(',', '.')) || 0;
-    const valor_desconto  = parseFloat(String(row[7]  || '0').replace(',', '.')) || 0;
-    const valor_acrescimo = parseFloat(String(row[8]  || '0').replace(',', '.')) || 0;
-    const valor_final     = parseFloat(String(row[9]  || '0').replace(',', '.')) || 0;
+    const produto         = String(row[13] || '').trim(); // coluna N
+    const quantidade      = toNum(row[14]);               // coluna O
+    const valor_unitario  = toNum(row[15]);               // coluna P
+    const valor_bruto     = toNum(row[16]);               // coluna Q
+    const valor_desconto  = toNum(row[17]);               // coluna R
+    const valor_acrescimo = toNum(row[18]);               // coluna S
+    const valor_final     = toNum(row[19]);               // coluna T
 
     const funcKey = `${posto.id}|${nomeFuncionario.toLowerCase()}`;
     const tipo    = funcEspIdx[funcKey] || 'frentista';
