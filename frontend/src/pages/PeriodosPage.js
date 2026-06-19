@@ -369,6 +369,11 @@ export default function PeriodosPage() {
   const [showWppModal, setShowWppModal] = useState(false);
   const [wppPeriodo, setWppPeriodo] = useState(null);
 
+  // CSV import
+  const [csvPeriodo, setCsvPeriodo] = useState(null);
+  const [csvLoading, setCsvLoading] = useState(false);
+  const [csvResult, setCsvResult] = useState(null);
+
   const load = () => {
     setLoading(true);
     Promise.all([
@@ -457,6 +462,25 @@ export default function PeriodosPage() {
     setShowWppModal(true);
   };
 
+  const handleCsvUpload = async (periodo, file) => {
+    setCsvPeriodo(periodo);
+    setCsvLoading(true);
+    setCsvResult(null);
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    try {
+      const r = await axios.post(`${API}/periodos/${periodo.id}/importar-csv`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setCsvResult({ ok: true, msg: r.data.message });
+      load();
+    } catch (e) {
+      setCsvResult({ ok: false, msg: e.response?.data?.error || 'Erro ao importar CSV' });
+    } finally {
+      setCsvLoading(false);
+    }
+  };
+
   const statusColor = s => s === 'ativo' ? 'badge-green' : 'badge-gray';
   const postosAtivos = postos.filter(p => p.ativo);
   const postosComGrupo = postosAtivos.filter(p => p.whatsapp_group_id);
@@ -537,6 +561,22 @@ export default function PeriodosPage() {
                                 <button className="btn btn-ghost btn-sm" onClick={e => openEdit(p, e)}>
                                   ✏ Editar
                                 </button>
+                                {p.status === 'ativo' && (
+                                  <label
+                                    className="btn btn-ghost btn-sm"
+                                    style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                    title="Importar CSV (coluna B = Chave Empresa)"
+                                    onClick={e => e.stopPropagation()}
+                                  >
+                                    {csvLoading && csvPeriodo?.id === p.id ? '⏳' : '📂 CSV'}
+                                    <input
+                                      type="file"
+                                      accept=".csv,.xlsx,.xls"
+                                      style={{ display: 'none' }}
+                                      onChange={e => { if (e.target.files[0]) { handleCsvUpload(p, e.target.files[0]); e.target.value = ''; } }}
+                                    />
+                                  </label>
+                                )}
                                 <button
                                   className="btn btn-sm"
                                   style={{
@@ -683,6 +723,22 @@ export default function PeriodosPage() {
           postos={postosAtivos}
           onClose={() => { setShowWppModal(false); setWppPeriodo(null); }}
         />
+      )}
+
+      {/* Feedback CSV */}
+      {csvResult && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+          background: csvResult.ok ? 'var(--success, #16a34a)' : 'var(--danger, #dc2626)',
+          color: '#fff', padding: '12px 20px', borderRadius: 8,
+          boxShadow: '0 4px 16px rgba(0,0,0,.25)', maxWidth: 380, fontSize: 14,
+        }}>
+          {csvResult.ok ? '✅ ' : '❌ '}{csvResult.msg}
+          <button
+            onClick={() => setCsvResult(null)}
+            style={{ marginLeft: 12, background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 16 }}
+          >×</button>
+        </div>
       )}
 
       {/* Modal Replicar — aparece após criação do período se há períodos anteriores */}

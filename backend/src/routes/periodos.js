@@ -1,9 +1,12 @@
 const router = require('express').Router();
 const axios  = require('axios');
 const XLSX   = require('xlsx');
+const multer = require('multer');
 const { query }  = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const { calcularComissoes } = require('../comissoes');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // ── PERÍODOS ──────────────────────────────────────────────────────────────────
 
@@ -383,6 +386,107 @@ router.post('/:id/importar', auth, adminOnly, async (req, res) => {
     'UPDATE periodos SET sheets_url=COALESCE($1, sheets_url), data_ultima_importacao=NOW() WHERE id=$2',
     [sheets_url || null, periodoId]
   );
+
+  res.json({
+    success: true,
+    imported: vendas.length,
+    skipped: erros,
+    message: `${vendas.length} vendas importadas com sucesso${erros > 0 ? `. ${erros} linhas ignoradas` : ''}`
+  });
+});
+
+// ── IMPORT VIA UPLOAD CSV (coluna B = chave_empresa do posto) ─────────────────
+
+router.post('/:id/importar-csv', auth, adminOnly, upload.single('arquivo'), async (req, res) => {
+  const periodoId = req.params.id;
+
+  const { rows: pRows } = await query('SELECT * FROM periodos WHERE id=$1', [periodoId]);
+  if (!pRows.length) return res.status(404).json({ error: 'Período não encontrado' });
+  if (pRows[0].status === 'fechado')
+    return res.status(400).json({ error: 'Período fechado. Não é possível importar dados.' });
+
+  if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+
+  let rows_data;
+  try {
+    const wb  = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws  = wb.Sheets[wb.SheetNames[0]];
+    rows_data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  } catch {
+    return res.status(400).json({ error: 'Não foi possível ler o arquivo. Envie um CSV ou XLSX válido.' });
+  }
+
+  if (!rows_data || rows_data.length < 2)
+    return res.status(400).json({ error: 'Arquivo vazio ou sem dados' });
+
+  const { rows: postos } = await query('SELECT * FROM postos WHERE ativo=true AND chave_empresa IS NOT NULL');
+  const { rows: funcsEsp } = await query(
+    'SELECT * FROM periodo_funcionarios WHERE periodo_id=$1', [periodoId]
+  );
+
+  // Índice por chave_empresa (normalizada)
+  const postoIdx = {};
+  for (const p of postos) {
+    if (p.chave_empresa) postoIdx[p.chave_empresa.trim().toLowerCase()] = p;
+  }
+
+  const funcEspIdx = {};
+  for (const f of funcsEsp) {
+    const k = `${f.posto_id}|${f.nome.trim().toLowerCase()}`;
+    if (!funcEspIdx[k] || f.tipo === 'gerente') funcEspIdx[k] = f.tipo;
+  }
+
+  const vendas = [];
+  let erros = 0;
+
+  for (let i = 1; i < rows_data.length; i++) {
+    const row = rows_data[i];
+    if (!row || row.every(c => c === '' || c == null)) continue;
+
+    // Coluna B (índice 1) = chave_empresa
+    const chave          = String(row[1] || '').trim().toLowerCase();
+    const posto          = postoIdx[chave];
+    if (!posto) { erros++; continue; }
+
+    const nomeFuncionario = String(row[2] || '').trim();  // coluna C
+    if (!nomeFuncionario) { erros++; continue; }
+
+    const produto         = String(row[3]  || '').trim();
+    const quantidade      = parseFloat(String(row[4]  || '0').replace(',', '.')) || 0;
+    const valor_unitario  = parseFloat(String(row[5]  || '0').replace(',', '.')) || 0;
+    const valor_bruto     = parseFloat(String(row[6]  || '0').replace(',', '.')) || 0;
+    const valor_desconto  = parseFloat(String(row[7]  || '0').replace(',', '.')) || 0;
+    const valor_acrescimo = parseFloat(String(row[8]  || '0').replace(',', '.')) || 0;
+    const valor_final     = parseFloat(String(row[9]  || '0').replace(',', '.')) || 0;
+
+    const funcKey = `${posto.id}|${nomeFuncionario.toLowerCase()}`;
+    const tipo    = funcEspIdx[funcKey] || 'frentista';
+
+    vendas.push([periodoId, posto.id, nomeFuncionario, tipo, produto,
+                 quantidade, valor_unitario, valor_bruto, valor_desconto, valor_acrescimo, valor_final]);
+  }
+
+  if (!vendas.length)
+    return res.status(400).json({ error: `Nenhuma venda válida encontrada. Verifique se a coluna B do CSV corresponde à Chave Empresa cadastrada nos postos. ${erros} linhas ignoradas.` });
+
+  await query('DELETE FROM vendas WHERE periodo_id=$1', [periodoId]);
+
+  const BATCH = 200;
+  for (let i = 0; i < vendas.length; i += BATCH) {
+    const batch = vendas.slice(i, i + BATCH);
+    const vals  = batch.map((_, j) => {
+      const b = j * 11;
+      return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9},$${b+10},$${b+11})`;
+    }).join(',');
+    await query(
+      `INSERT INTO vendas (periodo_id,posto_id,funcionario,tipo_funcionario,produto,
+        quantidade,valor_unitario,valor_bruto,valor_desconto,valor_acrescimo,valor_final)
+       VALUES ${vals}`,
+      batch.flat()
+    );
+  }
+
+  await query('UPDATE periodos SET data_ultima_importacao=NOW() WHERE id=$1', [periodoId]);
 
   res.json({
     success: true,

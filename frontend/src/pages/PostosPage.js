@@ -12,7 +12,7 @@ export default function PostosPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editPosto, setEditPosto] = useState(null);
-  const [form, setForm] = useState({ codigo: '', nome: '', whatsapp_group_id: '' });
+  const [form, setForm] = useState({ codigo: '', nome: '', whatsapp_group_id: '', chave_empresa: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -25,14 +25,14 @@ export default function PostosPage() {
 
   const openCreate = () => {
     setEditPosto(null);
-    setForm({ codigo: '', nome: '', whatsapp_group_id: '' });
+    setForm({ codigo: '', nome: '', whatsapp_group_id: '', chave_empresa: '' });
     setError('');
     setShowModal(true);
   };
 
   const openEdit = (p) => {
     setEditPosto(p);
-    setForm({ codigo: p.codigo, nome: p.nome, whatsapp_group_id: p.whatsapp_group_id || '' });
+    setForm({ codigo: p.codigo, nome: p.nome, whatsapp_group_id: p.whatsapp_group_id || '', chave_empresa: p.chave_empresa || '' });
     setError('');
     setShowModal(true);
   };
@@ -43,6 +43,7 @@ export default function PostosPage() {
       const payload = {
         nome: form.nome,
         whatsapp_group_id: form.whatsapp_group_id.trim() || null,
+        chave_empresa: form.chave_empresa.trim() || null,
       };
       if (editPosto) {
         await axios.put(`${API}/postos/${editPosto.id}`, payload);
@@ -101,6 +102,7 @@ export default function PostosPage() {
                     <tr>
                       <th>Código</th>
                       <th>Nome</th>
+                      <th>Chave Empresa</th>
                       <th>Produtos Esp.</th>
                       <th>WhatsApp</th>
                       <th>Status</th>
@@ -117,6 +119,11 @@ export default function PostosPage() {
                           </span>
                         </td>
                         <td style={{ fontWeight: 600 }}>{p.nome}</td>
+                        <td>
+                          {p.chave_empresa
+                            ? <span className="badge badge-blue mono">{p.chave_empresa}</span>
+                            : <span className="badge badge-gray">—</span>}
+                        </td>
                         <td>
                           <span className="muted" style={{ fontSize: 12, cursor: 'pointer', color: 'var(--accent)' }}
                             onClick={() => navigate(`/postos/${p.id}`)}>
@@ -185,19 +192,30 @@ export default function PostosPage() {
             </div>
 
             <div className="form-group">
+              <label>Chave Empresa (CSV)</label>
+              <input
+                placeholder="Ex: 001, EMP-001, código do sistema…"
+                value={form.chave_empresa}
+                onChange={e => setForm({ ...form, chave_empresa: e.target.value })}
+              />
+              <div className="form-hint">
+                Identificador que aparece na <strong>coluna B</strong> do CSV exportado pelo sistema.
+                Usado para vincular as linhas do CSV a este posto na importação.
+              </div>
+            </div>
+
+            <div className="form-group">
               <label>
                 <span style={{ marginRight: 6 }}>📱</span>
                 ID do Grupo WhatsApp
               </label>
               <input
-                placeholder="Ex: 120363XXXXXXXXXX@g.us"
+                placeholder="Ex: 120363XXXXXXXXXX-group"
                 value={form.whatsapp_group_id}
                 onChange={e => setForm({ ...form, whatsapp_group_id: e.target.value })}
               />
               <div className="form-hint">
-                ID do grupo no formato <code style={{ background: 'var(--surface2)', padding: '1px 5px', borderRadius: 3, fontSize: 11 }}>XXXXXXXXXXX@g.us</code>.
-                Obtenha via Evolution API ou enviando uma mensagem no grupo e verificando o número.
-                Deixe em branco para não enviar relatório para este posto.
+                ID do grupo WhatsApp. Deixe em branco para não enviar relatório para este posto.
               </div>
             </div>
           </div>

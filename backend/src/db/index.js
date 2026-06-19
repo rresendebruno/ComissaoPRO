@@ -100,6 +100,11 @@ async function migrate() {
     ALTER TABLE postos ADD COLUMN IF NOT EXISTS whatsapp_group_id VARCHAR(100) DEFAULT NULL;
   `);
 
+  // ── Migração: chave_empresa em postos ─────────────────────────────────────
+  await query(`
+    ALTER TABLE postos ADD COLUMN IF NOT EXISTS chave_empresa VARCHAR(100) DEFAULT NULL;
+  `);
+
   // ── Migração: data_ultima_importacao em periodos ───────────────────────────
   await query(`
     ALTER TABLE periodos ADD COLUMN IF NOT EXISTS data_ultima_importacao TIMESTAMPTZ;
