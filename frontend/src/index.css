@@ -488,15 +488,33 @@ input::placeholder { color: var(--text-muted); }
    PRINT
    ═══════════════════════════════════════════════════════ */
 @media print {
-  @page { size: A4 landscape; margin: 12mm 10mm; }
+  @page { size: A4 landscape; margin: 10mm 8mm; }
 
+  /* ── Layout ── */
   .sidebar, .topbar, .mobile-bottom-nav, .mobile-menu-btn, .no-print { display: none !important; }
   .main { margin-left: 0 !important; }
   .page { padding: 0 !important; }
   body { background: #fff !important; color: #000 !important; font-family: Arial, sans-serif; }
+  .card { border: none !important; box-shadow: none !important; break-inside: avoid; overflow: visible !important; }
+  .table-wrap { overflow: visible !important; }
+  .print-only { display: block !important; }
+  .ll-row-vazio { display: none !important; }
 
-  .card { border: none !important; box-shadow: none !important; break-inside: avoid; }
+  /* Cada chunk de 13 postos começa numa nova página */
+  .ll-page-break {
+    page-break-before: always;
+    break-before: page;
+    margin-top: 0 !important;
+  }
 
+  /* Coluna DATA: remove sticky no print para não sair de posição */
+  .ll-col-data {
+    position: static !important;
+    background: transparent !important;
+    min-width: auto !important;
+  }
+
+  /* ── Cabeçalho Lucro Bruto ── */
   .ll-print-header {
     display: flex !important;
     justify-content: space-between;
@@ -505,46 +523,86 @@ input::placeholder { color: var(--text-muted); }
     padding-bottom: 6px;
     margin-bottom: 10px;
   }
-  .ll-print-header .ll-ph-title   { font-size: 15px; font-weight: 800; color: #111; }
-  .ll-print-header .ll-ph-sub     { font-size: 10px; color: #555; margin-top: 2px; }
-  .ll-print-header .ll-ph-meta    { font-size: 10px; color: #777; text-align: right; }
+  .ll-print-header .ll-ph-title { font-size: 15px; font-weight: 800; color: #111 !important; }
+  .ll-print-header .ll-ph-sub   { font-size: 10px; color: #555 !important; margin-top: 2px; }
+  .ll-print-header .ll-ph-meta  { font-size: 10px; color: #777 !important; text-align: right; }
 
-  table { font-size: 9px; width: 100%; border-collapse: collapse; }
+  /* ── Tabela geral ── */
+  /* Remove sticky que quebra layout em print */
+  table td, table th { position: static !important; }
+
+  table {
+    font-size: 7px !important;
+    width: 100% !important;
+    border-collapse: collapse !important;
+    table-layout: auto !important;
+  }
 
   thead th {
     background: #1e293b !important;
     color: #fff !important;
-    padding: 5px 7px;
-    font-weight: 700;
-    text-align: right;
-    border: 1px solid #334155;
+    padding: 3px 4px !important;
+    font-weight: 700 !important;
+    text-align: right !important;
+    border: 1px solid #334155 !important;
+    white-space: nowrap;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  thead th:first-child { text-align: left; }
+  thead th:first-child { text-align: left !important; }
 
+  tbody td {
+    padding: 2px 4px !important;
+    border: 1px solid #d1d5db !important;
+    color: #000 !important;
+    background: #fff !important;
+    white-space: nowrap;
+  }
   tbody tr:nth-child(even) td {
-    background: #f8fafc !important;
+    background: #f3f4f6 !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  tbody td { padding: 4px 7px; border: 1px solid #e2e8f0; }
+  tbody td:first-child { font-weight: 700 !important; }
 
   tfoot td {
     background: #1e293b !important;
     color: #fff !important;
-    font-weight: 800;
-    padding: 5px 7px;
-    border: 1px solid #334155;
+    font-weight: 800 !important;
+    padding: 3px 4px !important;
+    border: 1px solid #334155 !important;
+    white-space: nowrap;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
 
-  .ll-row-vazio { display: none !important; }
+  /* ── Texto geral ── */
+  * { color: #000 !important; }
 
-  .print-only { display: block !important; }
-  .card-title, .topbar-title { color: #000 !important; }
-  .badge { border: 1px solid #ccc; }
+  /* Badges: borda preta, fundo branco */
+  .badge, [class*="badge"] {
+    border: 1px solid #333 !important;
+    background: #fff !important;
+    color: #000 !important;
+    font-weight: 700 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Exceções: cabeçalho/rodapé de tabela já forçam branco acima */
+  thead th *, tfoot td * { color: #fff !important; }
 }
 .print-only { display: none; }
 .ll-print-header { display: none; }
+
+/* Coluna DATA — sticky na tela, estática no print */
+.ll-col-data {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 2;
+  min-width: 100px;
+}
+tfoot .ll-col-data {
+  background: var(--surface2);
+}

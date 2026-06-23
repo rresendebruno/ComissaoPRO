@@ -305,66 +305,77 @@ export default function LucroLiquidoPage() {
 
             {loadingMes && meses.length > 0 && <Spinner />}
 
-            {!loadingMes && dados && (
-              <div className="card" style={{ overflowX: 'auto' }}>
-                {/* Cabeçalho visível apenas no PDF */}
-                <div className="ll-print-header">
-                  <div>
-                    <div className="ll-ph-title">Lucro Líquido</div>
-                    <div className="ll-ph-sub">{mesSel ? labelMes(mesSel) : ''}</div>
-                  </div>
-                  <div className="ll-ph-meta">
-                    Emitido em {new Date().toLocaleDateString('pt-BR')}
-                  </div>
-                </div>
-                <div className="table-wrap">
-                  <table style={{ fontSize: 11, minWidth: 'max-content' }}>
-                    <thead>
-                      <tr>
-                        <th style={{ position: 'sticky', left: 0, background: 'var(--surface)', zIndex: 2, minWidth: 100 }}>DATA</th>
-                        {postos.map(p => (
-                          <th key={p.id} className="text-right" style={{ minWidth: 110 }}>{p.codigo}</th>
-                        ))}
-                        <th className="text-right" style={{ minWidth: 120, fontWeight: 800 }}>TOTAL</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dias.map(dia => {
-                        const vals = diasMap[dia] || {};
-                        const totalDia = postos.reduce((s, p) => s + (vals[p.id] || 0), 0);
-                        const temDado = postos.some(p => (vals[p.id] || 0) !== 0);
-                        return (
-                          <tr key={dia}
-                            className={temDado ? '' : 'll-row-vazio'}
-                            style={{ opacity: temDado ? 1 : 0.4 }}>
-                            <td style={{ position: 'sticky', left: 0, background: 'var(--surface)', fontWeight: 600 }}>
-                              {fmtDate(dia)}
-                            </td>
-                            {postos.map(p => (
-                              <td key={p.id} className="text-right mono">
-                                {vals[p.id] ? fmt(vals[p.id]) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                              </td>
+            {!loadingMes && dados && (() => {
+              const CHUNK = 13;
+              const chunks = [];
+              for (let i = 0; i < postos.length; i += CHUNK) chunks.push(postos.slice(i, i + CHUNK));
+              const emitido = new Date().toLocaleDateString('pt-BR');
+              const mesLabel = mesSel ? labelMes(mesSel) : '';
+
+              return chunks.map((chunk, ci) => {
+                const subTotal = chunk.reduce((s, p) => s + (totaisPosto[p.id] || 0), 0);
+                return (
+                  <div key={ci} className={`card ll-chunk${ci > 0 ? ' ll-page-break' : ''}`}
+                    style={{ overflowX: 'auto', marginBottom: 16 }}>
+                    {/* Cabeçalho print */}
+                    <div className="ll-print-header">
+                      <div>
+                        <div className="ll-ph-title">Lucro Bruto</div>
+                        <div className="ll-ph-sub">{mesLabel}{chunks.length > 1 ? ` — Parte ${ci + 1}/${chunks.length}` : ''}</div>
+                      </div>
+                      <div className="ll-ph-meta">Emitido em {emitido}</div>
+                    </div>
+
+                    <div className="table-wrap">
+                      <table style={{ fontSize: 11, minWidth: 'max-content' }}>
+                        <thead>
+                          <tr>
+                            <th className="ll-col-data">DATA</th>
+                            {chunk.map(p => (
+                              <th key={p.id} className="text-right" style={{ minWidth: 110 }}>{p.codigo}</th>
                             ))}
-                            <td className="text-right mono" style={{ fontWeight: 700 }}>
-                              {temDado ? fmt(totalDia) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                            </td>
+                            <th className="text-right" style={{ minWidth: 120, fontWeight: 800 }}>SUBTOTAL</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--surface2)', fontWeight: 800 }}>
-                        <td style={{ position: 'sticky', left: 0, background: 'var(--surface2)', padding: '8px 12px' }}>TOTAL</td>
-                        {postos.map(p => (
-                          <td key={p.id} className="text-right mono">{fmt(totaisPosto[p.id] || 0)}</td>
-                        ))}
-                        <td className="text-right mono">{fmt(totalGeral)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-            )}
+                        </thead>
+                        <tbody>
+                          {dias.map(dia => {
+                            const vals = diasMap[dia] || {};
+                            const temDado = chunk.some(p => (vals[p.id] || 0) !== 0);
+                            const sub = chunk.reduce((s, p) => s + (vals[p.id] || 0), 0);
+                            return (
+                              <tr key={dia}
+                                className={temDado ? '' : 'll-row-vazio'}
+                                style={{ opacity: temDado ? 1 : 0.4 }}>
+                                <td className="ll-col-data" style={{ fontWeight: 600 }}>
+                                  {fmtDate(dia)}
+                                </td>
+                                {chunk.map(p => (
+                                  <td key={p.id} className="text-right mono">
+                                    {vals[p.id] ? fmt(vals[p.id]) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                                  </td>
+                                ))}
+                                <td className="text-right mono" style={{ fontWeight: 700 }}>
+                                  {temDado ? fmt(sub) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--surface2)', fontWeight: 800 }}>
+                            <td className="ll-col-data" style={{ padding: '8px 12px' }}>TOTAL</td>
+                            {chunk.map(p => (
+                              <td key={p.id} className="text-right mono">{fmt(totaisPosto[p.id] || 0)}</td>
+                            ))}
+                            <td className="text-right mono">{fmt(subTotal)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </>
         )}
 
