@@ -408,8 +408,18 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.array('arquivo', 50), a
   const arquivos = req.files || [];
   if (!arquivos.length) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
-  const { rows: postos } = await query('SELECT * FROM postos WHERE ativo=true AND chave_empresa IS NOT NULL');
-  const { rows: funcsEsp } = await query('SELECT * FROM periodo_funcionarios WHERE periodo_id=$1', [periodoId]);
+  const [
+    { rows: postos },
+    { rows: funcsEsp },
+    { rows: ignoradosRows },
+  ] = await Promise.all([
+    query('SELECT * FROM postos WHERE ativo=true AND chave_empresa IS NOT NULL'),
+    query('SELECT * FROM periodo_funcionarios WHERE periodo_id=$1', [periodoId]),
+    query('SELECT tipo, nome FROM itens_ignorados'),
+  ]);
+
+  const ignoradosProdCSV = new Set(ignoradosRows.filter(i => i.tipo === 'produto').map(i => i.nome.trim().toLowerCase()));
+  const ignoradosFuncCSV = new Set(ignoradosRows.filter(i => i.tipo === 'funcionario').map(i => i.nome.trim().toLowerCase()));
 
   const postoIdx = {};
   for (const p of postos) {
@@ -422,18 +432,52 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.array('arquivo', 50), a
     if (!funcEspIdx[k] || f.tipo === 'gerente') funcEspIdx[k] = f.tipo;
   }
 
-  const toNum = v => parseFloat(String(v ?? '0').replace(/\./g, '').replace(',', '.')) || 0;
+  // Se já é número (XLSX parseia células numéricas diretamente), usa direto.
+  // Se é string, trata separador brasileiro: remove ponto de milhar, troca vírgula por ponto.
+  const toNum = v => {
+    if (v === null || v === undefined || v === '') return 0;
+    if (typeof v === 'number') return v;
+    const s = String(v).trim();
+    // Formato BR: 1.234,56 → remove pontos → troca vírgula → 1234.56
+    return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  };
 
   const vendas = [];
   let erros = 0;
   let arquivosLidos = 0;
 
   for (const arquivo of arquivos) {
+    const ext = arquivo.originalname.split('.').pop().toLowerCase();
+    if (ext !== 'csv') {
+      return res.status(400).json({ error: `Arquivo "${arquivo.originalname}" não é um CSV. Envie somente arquivos .csv` });
+    }
+
     let rows_data;
     try {
-      const wb  = XLSX.read(arquivo.buffer, { type: 'buffer' });
-      const ws  = wb.Sheets[wb.SheetNames[0]];
-      rows_data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      // Parse manual do CSV para controle total do separador decimal
+      const text = arquivo.buffer.toString('utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const lines = text.split('\n');
+
+      // Detecta delimitador pela primeira linha
+      const firstLine = lines[0] || '';
+      const delim = firstLine.split(';').length > firstLine.split(',').length ? ';' : ',';
+
+      // Divide cada linha respeitando campos entre aspas
+      const parseCSVLine = (line) => {
+        const result = [];
+        let cur = '';
+        let inQuotes = false;
+        for (let ci = 0; ci < line.length; ci++) {
+          const ch = line[ci];
+          if (ch === '"') { inQuotes = !inQuotes; }
+          else if (ch === delim && !inQuotes) { result.push(cur.trim()); cur = ''; }
+          else { cur += ch; }
+        }
+        result.push(cur.trim());
+        return result;
+      };
+
+      rows_data = lines.map(l => parseCSVLine(l));
       arquivosLidos++;
     } catch {
       erros++;
@@ -452,6 +496,9 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.array('arquivo', 50), a
       if (!nomeFuncionario) { erros++; continue; }
 
       const produto         = String(row[13] || '').trim(); // coluna N
+      if (ignoradosProdCSV.has(produto.toLowerCase())) continue;
+      if (ignoradosFuncCSV.has(nomeFuncionario.toLowerCase())) continue;
+
       const quantidade      = toNum(row[14]);               // coluna O
       const valor_unitario  = toNum(row[15]);               // coluna P
       const valor_bruto     = toNum(row[16]);               // coluna Q
@@ -470,7 +517,12 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.array('arquivo', 50), a
   if (!vendas.length)
     return res.status(400).json({ error: `Nenhuma venda válida encontrada em ${arquivosLidos} arquivo(s). Verifique se a coluna B corresponde à Chave Empresa cadastrada nos postos. ${erros} linhas ignoradas.` });
 
-  await query('DELETE FROM vendas WHERE periodo_id=$1', [periodoId]);
+  // Apaga apenas os postos presentes nos arquivos importados, preservando os demais
+  const postosImportados = [...new Set(vendas.map(v => v[1]))];
+  await query(
+    `DELETE FROM vendas WHERE periodo_id=$1 AND posto_id = ANY($2::int[])`,
+    [periodoId, postosImportados]
+  );
 
   const BATCH = 200;
   for (let i = 0; i < vendas.length; i += BATCH) {
@@ -489,11 +541,14 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.array('arquivo', 50), a
 
   await query('UPDATE periodos SET data_ultima_importacao=NOW() WHERE id=$1', [periodoId]);
 
+  const totalFinal = vendas.reduce((s, v) => s + (v[10] || 0), 0);
+
   res.json({
     success: true,
     imported: vendas.length,
     skipped: erros,
-    message: `${vendas.length} vendas importadas de ${arquivosLidos} arquivo(s)${erros > 0 ? `. ${erros} linhas ignoradas` : ''}`
+    totalFinal: totalFinal.toFixed(2),
+    message: `${vendas.length} vendas importadas de ${arquivosLidos} arquivo(s)${erros > 0 ? `. ${erros} linhas ignoradas` : ''}. Total valor_final: R$ ${totalFinal.toFixed(2).replace('.', ',')}`
   });
 });
 
@@ -510,6 +565,8 @@ router.get('/:id/comissoes', auth, async (req, res) => {
     { rows: produtosEspeciais },
     { rows: periodoFuncionarios },
     { rows: periodo },
+    { rows: postos },
+    { rows: ignorados },
   ] = await Promise.all([
     query(`SELECT v.*, p.codigo as posto_codigo, p.nome as posto_nome
            FROM vendas v JOIN postos p ON p.id=v.posto_id
@@ -523,6 +580,8 @@ router.get('/:id/comissoes', auth, async (req, res) => {
            JOIN postos p ON p.id=pf.posto_id
            WHERE pf.periodo_id=$1`, [req.params.id]),
     query('SELECT * FROM periodos WHERE id=$1', [req.params.id]),
+    query('SELECT id, codigo, nome, ativo FROM postos'),
+    query('SELECT tipo, nome FROM itens_ignorados'),
   ]);
 
   if (!periodo.length) return res.status(404).json({ error: 'Período não encontrado' });
@@ -537,15 +596,27 @@ router.get('/:id/comissoes', auth, async (req, res) => {
     console.warn('Tabela periodo_desqualificados ainda não existe, ignorando:', e.message);
   }
 
-  const comissoes = calcularComissoes(vendas, metas, produtosEspeciais, periodoFuncionarios, periodo[0], desqualificados);
+  const ignoradosProd = new Set(ignorados.filter(i => i.tipo === 'produto').map(i => i.nome.trim().toLowerCase()));
+  const ignoradosFunc = new Set(ignorados.filter(i => i.tipo === 'funcionario').map(i => i.nome.trim().toLowerCase()));
+
+  const vendasFiltradas = vendas.filter(v =>
+    !ignoradosProd.has((v.produto || '').trim().toLowerCase()) &&
+    !ignoradosFunc.has((v.funcionario || '').trim().toLowerCase())
+  );
+
+  const comissoes = calcularComissoes(vendasFiltradas, metas, produtosEspeciais, periodoFuncionarios, periodo[0], desqualificados);
 
   const metasMap = {};
   for (const m of metas) metasMap[m.posto_id] = m;
+
+  const postosInfo = {};
+  for (const p of postos) postosInfo[String(p.id)] = p;
 
   res.json({
     periodo: periodo[0],
     comissoes,
     metas: metasMap,
+    postosInfo,
     totalVendas: vendas.length,
     dataUltimaImportacao: periodo[0].data_ultima_importacao || null,
   });

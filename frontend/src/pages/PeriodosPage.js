@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { API } from '../contexts/AuthContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Modal, ConfirmModal, Spinner } from '../components/ui';
+import { fmtDate } from '../utils/fmt';
 
 // ── Modal de disparo WhatsApp ─────────────────────────────────────────────────
 
@@ -69,8 +70,8 @@ function WhatsAppModal({ periodo, postos, onClose }) {
           <div>
             <div style={{ fontWeight: 600, fontSize: 13 }}>{periodo.nome}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {new Date(periodo.data_inicio).toLocaleDateString('pt-BR')} →{' '}
-              {new Date(periodo.data_fim).toLocaleDateString('pt-BR')}
+              {fmtDate(periodo.data_inicio)} →{' '}
+              {fmtDate(periodo.data_fim)}
               {' · '}
               <span className={`badge ${periodo.status === 'ativo' ? 'badge-green' : 'badge-gray'}`} style={{ fontSize: 10 }}>
                 {periodo.status === 'ativo' ? 'Aberto' : 'Fechado'}
@@ -226,7 +227,7 @@ function ReplicarModal({ novoPeriodoId, novoPeriodoNome, periodos, onClose, onSu
   };
 
   return (
-    <Modal title="📋 Replicar Dados de Período Anterior" onClose={onClose} size={500}>
+    <Modal title="📋 Replicar Dados de Período Anterior" onClose={onClose} size="min(700px, calc(100vw - 32px))">
       <div className="modal-body">
         {/* Destino info */}
         <div style={{
@@ -264,50 +265,30 @@ function ReplicarModal({ novoPeriodoId, novoPeriodoNome, periodos, onClose, onSu
             </div>
 
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: 'var(--text-dim)', marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-dim)', marginBottom: 8 }}>
                 O que deseja copiar?
-              </label>
-
+              </div>
               <label style={{
-                display: 'flex', alignItems: 'flex-start', gap: 10,
-                padding: '10px 14px', borderRadius: 'var(--radius)',
+                display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 8,
                 background: replicarMetas ? 'rgba(79,110,247,0.08)' : 'var(--surface2)',
                 border: `1px solid ${replicarMetas ? 'rgba(79,110,247,0.3)' : 'var(--border)'}`,
-                cursor: 'pointer', marginBottom: 8, transition: 'all 0.15s',
               }}>
-                <input
-                  type="checkbox"
-                  checked={replicarMetas}
+                <input type="checkbox" checked={replicarMetas}
                   onChange={e => setReplicarMetas(e.target.checked)}
-                  style={{ accentColor: 'var(--accent)', marginTop: 2, flexShrink: 0 }}
-                />
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>📊 Metas dos postos</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    Copia meta de frentista, trocador e meta do posto para cada posto
-                  </div>
-                </div>
+                  style={{ accentColor: 'var(--accent)', width: 16, height: 16, flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Metas dos postos</span>
               </label>
-
               <label style={{
-                display: 'flex', alignItems: 'flex-start', gap: 10,
+                display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
                 padding: '10px 14px', borderRadius: 'var(--radius)',
                 background: replicarFuncs ? 'rgba(79,110,247,0.08)' : 'var(--surface2)',
                 border: `1px solid ${replicarFuncs ? 'rgba(79,110,247,0.3)' : 'var(--border)'}`,
-                cursor: 'pointer', transition: 'all 0.15s',
               }}>
-                <input
-                  type="checkbox"
-                  checked={replicarFuncs}
+                <input type="checkbox" checked={replicarFuncs}
                   onChange={e => setReplicarFuncs(e.target.checked)}
-                  style={{ accentColor: 'var(--accent)', marginTop: 2, flexShrink: 0 }}
-                />
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>👥 Gerentes & Trocadores</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    Copia os nomes e tipos de todos os gerentes e trocadores cadastrados
-                  </div>
-                </div>
+                  style={{ accentColor: 'var(--accent)', width: 16, height: 16, flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Gerentes & Trocadores</span>
               </label>
             </div>
 
@@ -469,9 +450,7 @@ export default function PeriodosPage() {
     const fd = new FormData();
     for (const f of files) fd.append('arquivo', f);
     try {
-      const r = await axios.post(`${API}/periodos/${periodo.id}/importar-csv`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const r = await axios.post(`${API}/periodos/${periodo.id}/importar-csv`, fd);
       setCsvResult({ ok: true, msg: r.data.message });
       load();
     } catch (e) {
@@ -538,8 +517,8 @@ export default function PeriodosPage() {
                     {periodos.map(p => (
                       <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/periodos/${p.id}`)}>
                         <td style={{ fontWeight: 600 }}>{p.nome}</td>
-                        <td className="mono">{new Date(p.data_inicio).toLocaleDateString('pt-BR')}</td>
-                        <td className="mono">{new Date(p.data_fim).toLocaleDateString('pt-BR')}</td>
+                        <td className="mono">{fmtDate(p.data_inicio)}</td>
+                        <td className="mono">{fmtDate(p.data_fim)}</td>
                         <td>
                           <span className={`badge ${statusColor(p.status)}`}>
                             {p.status === 'ativo' ? 'Aberto' : 'Fechado'}

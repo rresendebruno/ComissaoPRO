@@ -150,6 +150,61 @@ async function migrate() {
     $migration$;
   `);
 
+  await query(`
+    CREATE TABLE IF NOT EXISTS itens_ignorados (
+      id         SERIAL PRIMARY KEY,
+      tipo       VARCHAR(20) NOT NULL CHECK (tipo IN ('produto','funcionario')),
+      nome       VARCHAR(500) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tipo, nome)
+    );
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS lucro_liquido (
+      id         SERIAL PRIMARY KEY,
+      data       DATE NOT NULL,
+      posto_id   INTEGER REFERENCES postos(id) ON DELETE CASCADE,
+      valor      NUMERIC(15,2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(data, posto_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lucro_liquido_data ON lucro_liquido(data);
+  `);
+
+  // Tabelas do módulo Lucro Líquido detalhado
+  await query(`
+    CREATE TABLE IF NOT EXISTS ll_categorias (
+      id         SERIAL PRIMARY KEY,
+      nome       VARCHAR(255) NOT NULL,
+      pai_id     INTEGER REFERENCES ll_categorias(id) ON DELETE CASCADE,
+      criado_em  TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS ll_produtos (
+      id           SERIAL PRIMARY KEY,
+      nome         VARCHAR(500) NOT NULL UNIQUE,
+      categoria_id INTEGER REFERENCES ll_categorias(id) ON DELETE SET NULL,
+      criado_em    TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS ll_itens (
+      id            SERIAL PRIMARY KEY,
+      data          DATE NOT NULL,
+      posto_id      INTEGER REFERENCES postos(id) ON DELETE CASCADE,
+      produto_id    INTEGER REFERENCES ll_produtos(id),
+      quantidade    NUMERIC(15,3) DEFAULT 0,
+      valor_bruto   NUMERIC(15,2) DEFAULT 0,
+      valor_liquido NUMERIC(15,2) DEFAULT 0,
+      valor_custo   NUMERIC(15,2) DEFAULT 0,
+      lucro_bruto   NUMERIC(15,2) DEFAULT 0,
+      eh_media      BOOLEAN DEFAULT false,
+      criado_em     TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ll_itens_data  ON ll_itens(data);
+    CREATE INDEX IF NOT EXISTS idx_ll_itens_posto ON ll_itens(posto_id);
+  `);
+
   const { rows } = await query(`SELECT id FROM users WHERE username = 'admin'`);
   if (rows.length === 0) {
     const bcrypt = require('bcryptjs');

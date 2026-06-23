@@ -121,9 +121,7 @@ export default function PeriodoDetailPage() {
     const fd = new FormData();
     for (const f of files) fd.append('arquivo', f);
     try {
-      const r = await axios.post(`${API}/periodos/${id}/importar-csv`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const r = await axios.post(`${API}/periodos/${id}/importar-csv`, fd);
       setImportResult({ ok: true, msg: r.data.message });
       load();
       if (tab === 'vendas') loadVendas();

@@ -268,7 +268,7 @@ input::placeholder { color: var(--text-muted); }
 .modal {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; width: 100%; max-width: 520px;
-  max-height: 90vh; overflow-y: auto;
+  max-height: 90vh; overflow-y: auto; overflow-x: hidden;
 }
 .modal-head {
   padding: 18px 22px; border-bottom: 1px solid var(--border);
@@ -488,8 +488,63 @@ input::placeholder { color: var(--text-muted); }
    PRINT
    ═══════════════════════════════════════════════════════ */
 @media print {
-  .sidebar, .topbar, .mobile-bottom-nav, .mobile-menu-btn, .btn { display: none !important; }
+  @page { size: A4 landscape; margin: 12mm 10mm; }
+
+  .sidebar, .topbar, .mobile-bottom-nav, .mobile-menu-btn, .no-print { display: none !important; }
   .main { margin-left: 0 !important; }
   .page { padding: 0 !important; }
-  .card { border: 1px solid #ccc !important; break-inside: avoid; }
+  body { background: #fff !important; color: #000 !important; font-family: Arial, sans-serif; }
+
+  .card { border: none !important; box-shadow: none !important; break-inside: avoid; }
+
+  .ll-print-header {
+    display: flex !important;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 2px solid #1e293b;
+    padding-bottom: 6px;
+    margin-bottom: 10px;
+  }
+  .ll-print-header .ll-ph-title   { font-size: 15px; font-weight: 800; color: #111; }
+  .ll-print-header .ll-ph-sub     { font-size: 10px; color: #555; margin-top: 2px; }
+  .ll-print-header .ll-ph-meta    { font-size: 10px; color: #777; text-align: right; }
+
+  table { font-size: 9px; width: 100%; border-collapse: collapse; }
+
+  thead th {
+    background: #1e293b !important;
+    color: #fff !important;
+    padding: 5px 7px;
+    font-weight: 700;
+    text-align: right;
+    border: 1px solid #334155;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  thead th:first-child { text-align: left; }
+
+  tbody tr:nth-child(even) td {
+    background: #f8fafc !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  tbody td { padding: 4px 7px; border: 1px solid #e2e8f0; }
+
+  tfoot td {
+    background: #1e293b !important;
+    color: #fff !important;
+    font-weight: 800;
+    padding: 5px 7px;
+    border: 1px solid #334155;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .ll-row-vazio { display: none !important; }
+
+  .print-only { display: block !important; }
+  .card-title, .topbar-title { color: #000 !important; }
+  .badge { border: 1px solid #ccc; }
 }
+.print-only { display: none; }
+.ll-print-header { display: none; }

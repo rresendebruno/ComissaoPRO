@@ -13,6 +13,7 @@ export default function DashboardPage() {
   const [periodo, setPeriodo] = useState(null);
   const [comissoes, setComissoes] = useState(null);
   const [metas, setMetas] = useState({});
+  const [postosInfo, setPostosInfo] = useState({});
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -30,26 +31,29 @@ export default function DashboardPage() {
     axios.get(`${API}/periodos/${periodo.id}/comissoes`).then(r => {
       setComissoes(r.data.comissoes);
       setMetas(r.data.metas);
+      setPostosInfo(r.data.postosInfo || {});
     }).finally(() => setLoading(false));
   }, [periodo]);
 
   const postoIds = comissoes ? Object.keys(comissoes) : [];
 
-  const chartData = postoIds.map(pid => {
-    const d = comissoes[pid];
-
-    // FIX: usa totalVendasPosto (total real do posto) e metaPostoEfetiva para comparação
-    const totalPosto = toN(d.totalVendasPosto);
-    const metaPosto  = toN(d.metaPostoEfetiva) || toN(d.metaPosto);
-
-    return {
-      posto: `P${pid}`,
-      realizado: totalPosto,
-      meta: metaPosto,
-      pct: metaPosto > 0 ? totalPosto / metaPosto : 0,
-      totalComissoes: toN(d.totalComissoes),
-    };
-  }).sort((a, b) => a.posto.localeCompare(b.posto));
+  const chartData = postoIds
+    .filter(pid => postosInfo[pid]?.ativo !== false)
+    .map(pid => {
+      const d = comissoes[pid];
+      const info = postosInfo[pid];
+      const totalPosto = toN(d.totalVendasPosto);
+      const metaPosto  = toN(d.metaPostoEfetiva) || toN(d.metaPosto);
+      return {
+        pid,
+        posto: info?.codigo || `P${pid}`,
+        realizado: totalPosto,
+        meta: metaPosto,
+        pct: metaPosto > 0 ? totalPosto / metaPosto : 0,
+        totalComissoes: toN(d.totalComissoes),
+      };
+    })
+    .sort((a, b) => a.posto.localeCompare(b.posto, undefined, { numeric: true, sensitivity: 'base' }));
 
   const totalRealizado = chartData.reduce((s, d) => s + toN(d.realizado), 0);
   const totalMeta      = chartData.reduce((s, d) => s + toN(d.meta), 0);
@@ -70,7 +74,7 @@ export default function DashboardPage() {
     <>
       <div className="topbar">
         <div>
-          <div className="topbar-title">Dashboard</div>
+          <div className="topbar-title">Gerencial Agregados</div>
           <div className="topbar-sub">Visão geral do período</div>
         </div>
         <div className="flex items-center gap-8">
@@ -78,6 +82,9 @@ export default function DashboardPage() {
             style={{ maxWidth: 220 }}>
             {periodos.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
           </select>
+          <button className="btn btn-ghost" onClick={() => window.print()} title="Exportar PDF">
+            🖨️ Exportar PDF
+          </button>
         </div>
       </div>
 
@@ -178,11 +185,11 @@ export default function DashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {[...chartData].sort((a, b) => b.pct - a.pct).map((d, i) => {
+                    {chartData.map((d, i) => {
                       const st = statusMeta(d.pct);
                       return (
                         <tr key={d.posto}>
-                          <td style={{ color: i < 3 ? 'var(--amber)' : 'var(--text-muted)', fontWeight: 700, width: 32 }}>{i + 1}</td>
+                          <td style={{ color: 'var(--text-muted)', fontWeight: 700, width: 32 }}>{i + 1}</td>
                           <td><span className="badge badge-gray mono">{d.posto}</span></td>
                           <td className="text-right mono">{fmt(d.meta)}</td>
                           <td className="text-right mono bold">{fmt(d.realizado)}</td>

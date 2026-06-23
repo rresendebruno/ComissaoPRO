@@ -12,6 +12,9 @@ import PostoDetailPage from './pages/PostoDetailPage';
 import UsuariosPage from './pages/UsuariosPage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import RelatoriosPage from './pages/RelatoriosPage';
+import IgnoradosPage from './pages/IgnoradosPage';
+import LucroLiquidoPage from './pages/LucroLiquidoPage';
+import AnaliseLLPage from './pages/AnaliseLLPage';
 
 function Guard({ children, admin }) {
   const { user, loading } = useAuth();
@@ -33,6 +36,8 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/" element={<Guard><Layout /></Guard>}>
             <Route index element={<DashboardPage />} />
+            <Route path="lucro-liquido" element={<LucroLiquidoPage />} />
+            <Route path="analise-ll" element={<AnaliseLLPage />} />
             <Route path="periodos" element={<PeriodosPage />} />
             <Route path="periodos/:id" element={<PeriodoDetailPage />} />
             <Route path="comissoes" element={<ComissoesPage />} />
@@ -41,6 +46,7 @@ export default function App() {
             <Route path="postos/:id" element={<PostoDetailPage />} />
             <Route path="usuarios" element={<Guard admin><UsuariosPage /></Guard>} />
             <Route path="configuracoes" element={<Guard admin><ConfiguracoesPage /></Guard>} />
+            <Route path="ignorados" element={<Guard admin><IgnoradosPage /></Guard>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

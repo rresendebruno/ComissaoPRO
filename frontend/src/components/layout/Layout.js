@@ -65,7 +65,9 @@ export default function Layout() {
         <nav className="sidebar-nav">
           <div className="nav-group">
             <div className="nav-label">Principal</div>
-            {link('/', IC.dash, 'Dashboard', true)}
+            {link('/lucro-liquido', IC.relatorios, 'Lucro Bruto')}
+            {link('/analise-ll',   IC.comissoes,  'Análise BI')}
+            {link('/', IC.dash, 'Gerencial Agregados', true)}
           </div>
           <div className="nav-group">
             <div className="nav-label">Apuração</div>
@@ -77,6 +79,7 @@ export default function Layout() {
             <div className="nav-label">Cadastros</div>
             {link('/postos', IC.postos, 'Postos')}
             {user?.role === 'admin' && link('/usuarios', IC.users, 'Usuários')}
+            {user?.role === 'admin' && link('/ignorados', IC.config, 'Itens Ignorados')}
           </div>
           {user?.role === 'admin' && (
             <div className="nav-group">

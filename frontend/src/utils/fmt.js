@@ -1,6 +1,14 @@
 /** Converte qualquer valor (string ou number) para Number de forma segura */
 const toN = (v) => (v == null ? 0 : Number(v) || 0);
 
+/** Formata data sem conversão de fuso — recebe "2026-06-26" ou "2026-06-26T..." */
+export const fmtDate = (d) => {
+  if (!d) return '—';
+  const s = String(d).split('T')[0];
+  const [y, m, day] = s.split('-');
+  return `${day}/${m}/${y}`;
+};
+
 /** Formata valor monetário (R$) */
 export const fmt = (v, dec = 2) =>
   v == null ? '—' : new Intl.NumberFormat('pt-BR', {
