@@ -313,7 +313,8 @@ export default function LucroLiquidoPage() {
               const mesLabel = mesSel ? labelMes(mesSel) : '';
 
               return chunks.map((chunk, ci) => {
-                const subTotal = chunk.reduce((s, p) => s + (totaisPosto[p.id] || 0), 0);
+                const isUltima = ci === chunks.length - 1;
+                const labelTotal = isUltima && chunks.length > 1 ? 'TOTAL GERAL' : 'SUBTOTAL';
                 return (
                   <div key={ci} className={`card ll-chunk${ci > 0 ? ' ll-page-break' : ''}`}
                     style={{ overflowX: 'auto', marginBottom: 16 }}>
@@ -334,14 +335,16 @@ export default function LucroLiquidoPage() {
                             {chunk.map(p => (
                               <th key={p.id} className="text-right" style={{ minWidth: 110 }}>{p.codigo}</th>
                             ))}
-                            <th className="text-right" style={{ minWidth: 120, fontWeight: 800 }}>SUBTOTAL</th>
+                            <th className="text-right" style={{ minWidth: 130, fontWeight: 800 }}>{labelTotal}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {dias.map(dia => {
                             const vals = diasMap[dia] || {};
                             const temDado = chunk.some(p => (vals[p.id] || 0) !== 0);
-                            const sub = chunk.reduce((s, p) => s + (vals[p.id] || 0), 0);
+                            const sub = isUltima
+                              ? postos.reduce((s, p) => s + (vals[p.id] || 0), 0)
+                              : chunk.reduce((s, p) => s + (vals[p.id] || 0), 0);
                             return (
                               <tr key={dia}
                                 className={temDado ? '' : 'll-row-vazio'}
@@ -367,7 +370,7 @@ export default function LucroLiquidoPage() {
                             {chunk.map(p => (
                               <td key={p.id} className="text-right mono">{fmt(totaisPosto[p.id] || 0)}</td>
                             ))}
-                            <td className="text-right mono">{fmt(subTotal)}</td>
+                            <td className="text-right mono">{fmt(isUltima ? totalGeral : chunk.reduce((s, p) => s + (totaisPosto[p.id] || 0), 0))}</td>
                           </tr>
                         </tfoot>
                       </table>
