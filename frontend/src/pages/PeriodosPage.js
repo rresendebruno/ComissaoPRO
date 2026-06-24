@@ -537,17 +537,25 @@ export default function PeriodosPage() {
                                 {p.status === 'ativo' && (
                                   <label
                                     className="btn btn-ghost btn-sm"
-                                    style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                    style={{
+                                      cursor: csvLoading ? 'not-allowed' : 'pointer',
+                                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                                      opacity: csvLoading ? 0.6 : 1,
+                                      pointerEvents: csvLoading ? 'none' : 'auto',
+                                    }}
                                     title="Importar CSV (coluna B = Chave Empresa)"
                                     onClick={e => e.stopPropagation()}
                                   >
-                                    {csvLoading && csvPeriodo?.id === p.id ? '⏳' : '📂 CSV'}
+                                    {csvLoading && csvPeriodo?.id === p.id ? '⏳ Importando...' : '📂 CSV'}
                                     <input
                                       type="file"
-                                      accept=".csv,.xlsx,.xls"
+                                      accept=".csv"
                                       multiple
                                       style={{ display: 'none' }}
-                                      onChange={e => { if (e.target.files.length) { handleCsvUpload(p, e.target.files); e.target.value = ''; } }}
+                                      onChange={e => {
+                                        if (csvLoading) return;
+                                        if (e.target.files.length) { handleCsvUpload(p, e.target.files); e.target.value = ''; }
+                                      }}
                                     />
                                   </label>
                                 )}

@@ -481,13 +481,13 @@ export default function PeriodoDetailPage() {
               ) : (
                 <>
                   <div className="form-group">
-                    <label>Arquivo CSV ou XLSX</label>
+                    <label>Arquivos CSV</label>
                     <input
                       type="file"
-                      accept=".csv,.xlsx,.xls"
+                      accept=".csv"
                       multiple
                       disabled={importing}
-                      onChange={e => { if (e.target.files.length) { doImportCsv(e.target.files); e.target.value = ''; } }}
+                      onChange={e => { if (!importing && e.target.files.length) { doImportCsv(e.target.files); e.target.value = ''; } }}
                     />
                     <div className="form-hint">
                       Coluna B deve conter a <strong>Chave Empresa</strong> cadastrada no posto.

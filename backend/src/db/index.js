@@ -12,6 +12,21 @@ async function query(text, params) {
   }
 }
 
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function migrate() {
   // Tabelas principais
   await query(`
@@ -218,4 +233,4 @@ async function migrate() {
   console.log('Database migrated successfully');
 }
 
-module.exports = { query, migrate };
+module.exports = { query, migrate, withTransaction };

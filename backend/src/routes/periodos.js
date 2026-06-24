@@ -2,7 +2,7 @@ const router = require('express').Router();
 const axios  = require('axios');
 const XLSX   = require('xlsx');
 const multer = require('multer');
-const { query }  = require('../db');
+const { query, withTransaction }  = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const { calcularComissoes } = require('../comissoes');
 
@@ -405,7 +405,13 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.array('arquivo', 50), a
   if (pRows[0].status === 'fechado')
     return res.status(400).json({ error: 'Período fechado. Não é possível importar dados.' });
 
-  const arquivos = req.files || [];
+  // Deduplica arquivos pelo nome original para evitar dupla inserção
+  const vistos = new Set();
+  const arquivos = (req.files || []).filter(f => {
+    if (vistos.has(f.originalname)) return false;
+    vistos.add(f.originalname);
+    return true;
+  });
   if (!arquivos.length) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
   const [
@@ -518,28 +524,31 @@ router.post('/:id/importar-csv', auth, adminOnly, upload.array('arquivo', 50), a
     return res.status(400).json({ error: `Nenhuma venda válida encontrada em ${arquivosLidos} arquivo(s). Verifique se a coluna B corresponde à Chave Empresa cadastrada nos postos. ${erros} linhas ignoradas.` });
 
   // Apaga apenas os postos presentes nos arquivos importados, preservando os demais
+  // Usa transação para evitar duplicatas em caso de importação concorrente (duplo clique)
   const postosImportados = [...new Set(vendas.map(v => v[1]))];
-  await query(
-    `DELETE FROM vendas WHERE periodo_id=$1 AND posto_id = ANY($2::int[])`,
-    [periodoId, postosImportados]
-  );
-
-  const BATCH = 200;
-  for (let i = 0; i < vendas.length; i += BATCH) {
-    const batch = vendas.slice(i, i + BATCH);
-    const vals  = batch.map((_, j) => {
-      const b = j * 11;
-      return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9},$${b+10},$${b+11})`;
-    }).join(',');
-    await query(
-      `INSERT INTO vendas (periodo_id,posto_id,funcionario,tipo_funcionario,produto,
-        quantidade,valor_unitario,valor_bruto,valor_desconto,valor_acrescimo,valor_final)
-       VALUES ${vals}`,
-      batch.flat()
+  await withTransaction(async (client) => {
+    await client.query(
+      `DELETE FROM vendas WHERE periodo_id=$1 AND posto_id = ANY($2::int[])`,
+      [periodoId, postosImportados]
     );
-  }
 
-  await query('UPDATE periodos SET data_ultima_importacao=NOW() WHERE id=$1', [periodoId]);
+    const BATCH = 200;
+    for (let i = 0; i < vendas.length; i += BATCH) {
+      const batch = vendas.slice(i, i + BATCH);
+      const vals  = batch.map((_, j) => {
+        const b = j * 11;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9},$${b+10},$${b+11})`;
+      }).join(',');
+      await client.query(
+        `INSERT INTO vendas (periodo_id,posto_id,funcionario,tipo_funcionario,produto,
+          quantidade,valor_unitario,valor_bruto,valor_desconto,valor_acrescimo,valor_final)
+         VALUES ${vals}`,
+        batch.flat()
+      );
+    }
+
+    await client.query('UPDATE periodos SET data_ultima_importacao=NOW() WHERE id=$1', [periodoId]);
+  });
 
   const totalFinal = vendas.reduce((s, v) => s + (v[10] || 0), 0);
 
