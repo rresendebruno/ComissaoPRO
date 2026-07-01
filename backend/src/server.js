@@ -14,7 +14,8 @@ app.use('/api/whatsapp',   require('./routes/whatsapp'));
 app.use('/api/config',     require('./routes/config'));
 app.use('/api/relatorios', require('./routes/relatorios'));
 app.use('/api/ignorados',     require('./routes/ignorados'));
-app.use('/api/lucro-liquido', require('./routes/lucroLiquido'));
+app.use('/api/lucro-liquido',    require('./routes/lucroLiquido'));
+app.use('/api/metas-trimestre', require('./routes/metasTrimestre'));
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date() }));

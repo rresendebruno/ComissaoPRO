@@ -71,9 +71,10 @@ export default function Layout() {
           </div>
           <div className="nav-group">
             <div className="nav-label">Apuração</div>
-            {link('/periodos',   IC.periodos,   'Períodos')}
-            {link('/comissoes',  IC.comissoes,  'Comissões')}
-            {link('/relatorios', IC.relatorios, 'Relatórios')}
+            {link('/periodos',       IC.periodos,   'Períodos')}
+            {link('/comissoes',      IC.comissoes,  'Comissões')}
+            {link('/relatorios',     IC.relatorios, 'Relatórios')}
+            {user?.role === 'admin' && link('/metas-trimestre', IC.config, 'Metas Trimestrais')}
           </div>
           <div className="nav-group">
             <div className="nav-label">Cadastros</div>
