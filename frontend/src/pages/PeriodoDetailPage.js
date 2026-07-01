@@ -64,6 +64,16 @@ export default function PeriodoDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // Metas automáticas (trimestre)
+  const [allPeriodos, setAllPeriodos]       = useState([]);
+  const [fonteIds, setFonteIds]             = useState([]);
+  const [percentualAuto, setPercentualAuto] = useState(5);
+  const [previewRows, setPreviewRows]       = useState(null);
+  const [loadingAutoMeta, setLoadingAutoMeta] = useState(false);
+  const [applyingAutoMeta, setApplyingAutoMeta] = useState(false);
+  const [autoMetaResult, setAutoMetaResult] = useState(null);
+  const [erroAutoMeta, setErroAutoMeta]     = useState('');
+
   const isAdmin = user?.role === 'admin';
 
   const load = useCallback(() => {
@@ -114,6 +124,61 @@ export default function PeriodoDetailPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (tab === 'vendas') { loadVendas(); loadProdutosEspeciais(); } }, [tab, loadVendas, loadProdutosEspeciais]);
   useEffect(() => { if (tab === 'desqualificados') loadTodosFuncionarios(); }, [tab, loadTodosFuncionarios]);
+  useEffect(() => {
+    if (tab === 'metas-auto' && !allPeriodos.length) {
+      axios.get(`${API}/periodos`).then(r => {
+        const outros = r.data.filter(p => String(p.id) !== String(id));
+        setAllPeriodos(outros);
+        // pré-seleciona os 3 mais recentes
+        setFonteIds(outros.slice(0, 3).map(p => p.id));
+      });
+    }
+  }, [tab, id, allPeriodos.length]);
+
+  // ── Metas automáticas
+  const calcAutoPreview = async () => {
+    if (!fonteIds.length) return;
+    setLoadingAutoMeta(true); setErroAutoMeta(''); setPreviewRows(null); setAutoMetaResult(null);
+    try {
+      const r = await axios.get(`${API}/metas-trimestre/preview`, {
+        params: { periodo_ids: fonteIds.join(','), percentual: percentualAuto },
+      });
+      setPreviewRows(r.data.resultado.map(row => ({ ...row })));
+    } catch (e) {
+      setErroAutoMeta(e.response?.data?.error || 'Erro ao calcular preview');
+    } finally { setLoadingAutoMeta(false); }
+  };
+
+  const editPreviewRow = (postoId, field, val) => {
+    setPreviewRows(prev => prev.map(r =>
+      r.posto_id === postoId ? { ...r, [field]: val } : r
+    ));
+  };
+
+  const aplicarAutoMetas = async (notificarWpp) => {
+    if (!previewRows?.length) return;
+    setApplyingAutoMeta(true); setAutoMetaResult(null);
+    try {
+      const metas = previewRows.map(r => ({
+        posto_id:       r.posto_id,
+        codigo:         r.codigo,
+        posto_nome:     r.posto_nome,
+        meta_frentista: parseFloat(r.nova_frentista) || 0,
+        meta_trocador:  parseFloat(r.nova_trocador)  || 0,
+        meta_posto:     parseFloat(r.nova_posto)     || 0,
+        whatsapp_group_id: r.whatsapp_group_id || null,
+      }));
+      const r = await axios.post(`${API}/metas-trimestre/aplicar-valores`, {
+        periodo_destino_id: Number(id),
+        metas,
+        notificar_whatsapp: notificarWpp,
+      });
+      setAutoMetaResult({ ok: true, data: r.data });
+      load(); // recarrega metas do período
+    } catch (e) {
+      setAutoMetaResult({ ok: false, msg: e.response?.data?.error || 'Erro ao aplicar metas' });
+    } finally { setApplyingAutoMeta(false); }
+  };
 
   // ── Import CSV
   const doImportCsv = async (files) => {
@@ -334,6 +399,7 @@ export default function PeriodoDetailPage() {
             ['importar', 'Importar Vendas'],
             ['vendas', 'Vendas'],
             ['desqualificados', 'Desqualificados'],
+            ...(isAdmin ? [['metas-auto', '🎯 Metas Trimestrais']] : []),
           ].map(([k, v]) => (
             <div key={k} className={`tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>{v}</div>
           ))}
@@ -675,6 +741,213 @@ export default function PeriodoDetailPage() {
                   </div>
                 )}
               </>
+            )}
+          </div>
+        )}
+
+        {/* ─── METAS TRIMESTRAIS ─── */}
+        {tab === 'metas-auto' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16, alignItems: 'start' }}>
+
+            {/* Coluna esquerda: configuração */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="card">
+                <div className="card-header"><div className="card-title">Períodos de Referência</div></div>
+                <div style={{ padding: '10px 14px 14px' }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                    Selecione os períodos para calcular a média (recomendado: últimos 3)
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 260, overflowY: 'auto' }}>
+                    {allPeriodos.map(p => (
+                      <label key={p.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                        padding: '5px 8px', borderRadius: 7, fontSize: 12,
+                        background: fonteIds.includes(p.id) ? 'var(--accent-soft)' : 'var(--surface2)',
+                        border: `1px solid ${fonteIds.includes(p.id) ? 'var(--accent)' : 'var(--border)'}`,
+                      }}>
+                        <input type="checkbox" checked={fonteIds.includes(p.id)}
+                          onChange={() => {
+                            setFonteIds(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]);
+                            setPreviewRows(null); setAutoMetaResult(null);
+                          }} />
+                        <span style={{ flex: 1 }}>{p.nome}</span>
+                        <span className={`badge ${p.status === 'ativo' ? 'badge-green' : 'badge-gray'}`}
+                          style={{ fontSize: 9 }}>{p.status}</span>
+                      </label>
+                    ))}
+                    {allPeriodos.length === 0 && (
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Carregando períodos…</div>
+                    )}
+                  </div>
+                  {fonteIds.length > 0 && (
+                    <div style={{ marginTop: 6, fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>
+                      {fonteIds.length} período(s) selecionado(s)
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="card-header"><div className="card-title">Ajuste %</div></div>
+                <div style={{ padding: '10px 14px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input type="number" className="input" min={0} max={100} step={0.5}
+                      value={percentualAuto}
+                      onChange={e => { setPercentualAuto(parseFloat(e.target.value) || 0); setPreviewRows(null); }}
+                      style={{ width: 80 }}
+                    />
+                    <span style={{ fontWeight: 700 }}>%</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>sobre a média</span>
+                  </div>
+                </div>
+              </div>
+
+              <button className="btn btn-primary" style={{ width: '100%' }}
+                disabled={!fonteIds.length || loadingAutoMeta}
+                onClick={calcAutoPreview}>
+                {loadingAutoMeta ? '⟳ Calculando...' : '📊 Calcular Preview'}
+              </button>
+
+              {erroAutoMeta && (
+                <div className="alert alert-error" style={{ fontSize: 12 }}>{erroAutoMeta}</div>
+              )}
+
+              {previewRows && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <button className="btn btn-primary" style={{ width: '100%' }}
+                    disabled={applyingAutoMeta} onClick={() => aplicarAutoMetas(false)}>
+                    {applyingAutoMeta ? '⟳ Aplicando...' : '✅ Aplicar Metas'}
+                  </button>
+                  <button className="btn" style={{ width: '100%', background: '#25d366', color: '#fff', border: 'none' }}
+                    disabled={applyingAutoMeta} onClick={() => aplicarAutoMetas(true)}>
+                    {applyingAutoMeta ? '⟳ Aplicando...' : '📱 Aplicar + Notificar WPP'}
+                  </button>
+                </div>
+              )}
+
+              {autoMetaResult && (
+                <div className={`alert ${autoMetaResult.ok ? 'alert-success' : 'alert-error'}`} style={{ fontSize: 12 }}>
+                  {autoMetaResult.ok ? autoMetaResult.data.message : autoMetaResult.msg}
+                  {autoMetaResult.ok && autoMetaResult.data.whatsapp?.length > 0 && (
+                    <ul style={{ marginTop: 6, paddingLeft: 14 }}>
+                      {autoMetaResult.data.whatsapp.map(w => (
+                        <li key={w.posto} style={{ color: w.status === 'enviado' ? '#22c55e' : '#ef4444' }}>
+                          {w.posto}: {w.status === 'enviado' ? '✓ enviado' : `✗ ${w.erro}`}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Coluna direita: tabela editável */}
+            {!previewRows && !loadingAutoMeta && (
+              <div className="card" style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 36, marginBottom: 10 }}>🎯</div>
+                <div style={{ fontWeight: 700 }}>Selecione os períodos e clique em Calcular Preview</div>
+                <div style={{ fontSize: 12, marginTop: 4 }}>
+                  Os valores calculados poderão ser ajustados antes de aplicar.
+                </div>
+              </div>
+            )}
+
+            {loadingAutoMeta && <div className="card" style={{ padding: 48, textAlign: 'center' }}><Spinner /></div>}
+
+            {previewRows && !loadingAutoMeta && (
+              <div className="card">
+                <div className="card-header">
+                  <div>
+                    <div className="card-title">Preview — edite os valores antes de aplicar</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      Média de {fonteIds.length} período(s) + {percentualAuto}% • Clique nos valores para editar
+                    </div>
+                  </div>
+                </div>
+                <div className="table-wrap">
+                  <table style={{ fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th>Posto</th>
+                        <th className="text-right" style={{ color: 'var(--text-muted)' }}>Média Frent.</th>
+                        <th className="text-right" style={{ color: 'var(--accent)' }}>Nova Frent.</th>
+                        <th className="text-right" style={{ color: 'var(--text-muted)' }}>Média Troc.</th>
+                        <th className="text-right" style={{ color: 'var(--accent)' }}>Nova Troc.</th>
+                        <th className="text-right" style={{ color: 'var(--text-muted)' }}>Média Posto</th>
+                        <th className="text-right" style={{ color: 'var(--accent)' }}>Nova Posto</th>
+                        <th style={{ width: 32, textAlign: 'center' }}>WPP</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewRows.map(r => (
+                        <tr key={r.posto_id}>
+                          <td>
+                            <div style={{ fontWeight: 700 }}>{r.codigo}</div>
+                            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{r.posto_nome}</div>
+                          </td>
+                          <td className="text-right mono" style={{ color: 'var(--text-muted)' }}>{fmt(r.avg_frentista)}</td>
+                          <td className="text-right">
+                            <input type="number" step="0.01" min="0"
+                              value={r.nova_frentista}
+                              onChange={e => editPreviewRow(r.posto_id, 'nova_frentista', e.target.value)}
+                              style={{ width: 100, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12,
+                                border: '1px solid var(--accent)', borderRadius: 4, padding: '2px 6px',
+                                background: 'var(--surface)', color: 'var(--accent)', fontWeight: 700 }}
+                            />
+                          </td>
+                          <td className="text-right mono" style={{ color: 'var(--text-muted)' }}>{fmt(r.avg_trocador)}</td>
+                          <td className="text-right">
+                            <input type="number" step="0.01" min="0"
+                              value={r.nova_trocador}
+                              onChange={e => editPreviewRow(r.posto_id, 'nova_trocador', e.target.value)}
+                              style={{ width: 100, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12,
+                                border: '1px solid var(--accent)', borderRadius: 4, padding: '2px 6px',
+                                background: 'var(--surface)', color: 'var(--accent)', fontWeight: 700 }}
+                            />
+                          </td>
+                          <td className="text-right mono" style={{ color: 'var(--text-muted)' }}>{fmt(r.avg_posto)}</td>
+                          <td className="text-right">
+                            <input type="number" step="0.01" min="0"
+                              value={r.nova_posto}
+                              onChange={e => editPreviewRow(r.posto_id, 'nova_posto', e.target.value)}
+                              style={{ width: 110, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12,
+                                border: '1px solid var(--accent)', borderRadius: 4, padding: '2px 6px',
+                                background: 'var(--surface)', color: 'var(--accent)', fontWeight: 700 }}
+                            />
+                          </td>
+                          <td style={{ textAlign: 'center', fontSize: 14 }}>
+                            {r.tem_whatsapp ? '✅' : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td style={{ fontWeight: 800 }}>TOTAL</td>
+                        <td className="text-right mono" style={{ color: 'var(--text-muted)' }}>
+                          {fmt(previewRows.reduce((s, r) => s + (parseFloat(r.avg_frentista) || 0), 0))}
+                        </td>
+                        <td className="text-right mono" style={{ fontWeight: 800 }}>
+                          {fmt(previewRows.reduce((s, r) => s + (parseFloat(r.nova_frentista) || 0), 0))}
+                        </td>
+                        <td className="text-right mono" style={{ color: 'var(--text-muted)' }}>
+                          {fmt(previewRows.reduce((s, r) => s + (parseFloat(r.avg_trocador) || 0), 0))}
+                        </td>
+                        <td className="text-right mono" style={{ fontWeight: 800 }}>
+                          {fmt(previewRows.reduce((s, r) => s + (parseFloat(r.nova_trocador) || 0), 0))}
+                        </td>
+                        <td className="text-right mono" style={{ color: 'var(--text-muted)' }}>
+                          {fmt(previewRows.reduce((s, r) => s + (parseFloat(r.avg_posto) || 0), 0))}
+                        </td>
+                        <td className="text-right mono" style={{ fontWeight: 800 }}>
+                          {fmt(previewRows.reduce((s, r) => s + (parseFloat(r.nova_posto) || 0), 0))}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
             )}
           </div>
         )}

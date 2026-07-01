@@ -175,4 +175,62 @@ router.post('/aplicar', auth, adminOnly, async (req, res) => {
   });
 });
 
+// ── POST /aplicar-valores ─────────────────────────────────────────────────────
+// Aplica valores já calculados/editados pelo usuário no frontend.
+// Body: { periodo_destino_id, metas: [{posto_id, codigo, posto_nome, meta_frentista, meta_trocador, meta_posto, whatsapp_group_id?}], notificar_whatsapp }
+
+router.post('/aplicar-valores', auth, adminOnly, async (req, res) => {
+  const { periodo_destino_id, metas: metasInput, notificar_whatsapp = false } = req.body;
+
+  if (!periodo_destino_id)     return res.status(400).json({ error: 'periodo_destino_id obrigatório' });
+  if (!metasInput?.length)     return res.status(400).json({ error: 'metas obrigatório' });
+
+  const { rows: pRows } = await query('SELECT * FROM periodos WHERE id=$1', [periodo_destino_id]);
+  if (!pRows.length) return res.status(404).json({ error: 'Período destino não encontrado' });
+  const periodoDestino = pRows[0];
+
+  let aplicadas = 0;
+  for (const m of metasInput) {
+    await query(
+      `INSERT INTO metas (periodo_id, posto_id, meta_frentista, meta_trocador, meta_posto)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (posto_id, periodo_id) DO UPDATE
+         SET meta_frentista=$3, meta_trocador=$4, meta_posto=$5`,
+      [periodo_destino_id, m.posto_id,
+       parseFloat(m.meta_frentista) || 0,
+       parseFloat(m.meta_trocador)  || 0,
+       parseFloat(m.meta_posto)     || 0]
+    );
+    aplicadas++;
+  }
+
+  const wppResultados = [];
+  if (notificar_whatsapp) {
+    for (const m of metasInput) {
+      if (!m.whatsapp_group_id) continue;
+      const msg =
+        `🎯 *Novas Metas — ${periodoDestino.nome}*\n\n` +
+        `📍 ${m.codigo} — ${m.posto_nome}\n\n` +
+        `👷 Frentistas: *${fmt(parseFloat(m.meta_frentista) || 0)}*\n` +
+        `🔧 Trocadores:  *${fmt(parseFloat(m.meta_trocador)  || 0)}*\n` +
+        `🏪 Posto:       *${fmt(parseFloat(m.meta_posto)     || 0)}*`;
+      try {
+        await enviarTextoParaGrupo(m.whatsapp_group_id, msg);
+        wppResultados.push({ posto: m.codigo, status: 'enviado' });
+      } catch (e) {
+        console.error(`[MetasTrimestre] WPP erro ${m.codigo}:`, e.message);
+        wppResultados.push({ posto: m.codigo, status: 'erro', erro: e.message });
+      }
+    }
+  }
+
+  res.json({
+    success: true,
+    aplicadas,
+    periodo_destino: periodoDestino.nome,
+    whatsapp: wppResultados,
+    message: `${aplicadas} metas aplicadas no período "${periodoDestino.nome}"${notificar_whatsapp ? `. ${wppResultados.filter(r => r.status === 'enviado').length} grupos notificados.` : ''}`,
+  });
+});
+
 module.exports = router;

@@ -15,7 +15,6 @@ import RelatoriosPage from './pages/RelatoriosPage';
 import IgnoradosPage from './pages/IgnoradosPage';
 import LucroLiquidoPage from './pages/LucroLiquidoPage';
 import AnaliseLLPage from './pages/AnaliseLLPage';
-import MetasTrimestrePage from './pages/MetasTrimestrePage';
 
 function Guard({ children, admin }) {
   const { user, loading } = useAuth();
@@ -48,7 +47,6 @@ export default function App() {
             <Route path="usuarios" element={<Guard admin><UsuariosPage /></Guard>} />
             <Route path="configuracoes" element={<Guard admin><ConfiguracoesPage /></Guard>} />
             <Route path="ignorados" element={<Guard admin><IgnoradosPage /></Guard>} />
-            <Route path="metas-trimestre" element={<Guard admin><MetasTrimestrePage /></Guard>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
