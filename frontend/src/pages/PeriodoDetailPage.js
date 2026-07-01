@@ -860,7 +860,7 @@ export default function PeriodoDetailPage() {
                   <div>
                     <div className="card-title">Preview — edite os valores antes de aplicar</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      Média de {fonteIds.length} período(s) + {percentualAuto}% • Clique nos valores para editar
+                      Média do realizado em {fonteIds.length} período(s) + {percentualAuto}% • Clique nos valores para editar
                     </div>
                   </div>
                 </div>
@@ -869,12 +869,12 @@ export default function PeriodoDetailPage() {
                     <thead>
                       <tr>
                         <th>Posto</th>
-                        <th className="text-right" style={{ color: 'var(--text-muted)' }}>Média Frent.</th>
-                        <th className="text-right" style={{ color: 'var(--accent)' }}>Nova Frent.</th>
-                        <th className="text-right" style={{ color: 'var(--text-muted)' }}>Média Troc.</th>
-                        <th className="text-right" style={{ color: 'var(--accent)' }}>Nova Troc.</th>
-                        <th className="text-right" style={{ color: 'var(--text-muted)' }}>Média Posto</th>
-                        <th className="text-right" style={{ color: 'var(--accent)' }}>Nova Posto</th>
+                        <th className="text-right" style={{ color: 'var(--text-muted)' }}>Realiz./Frent.</th>
+                        <th className="text-right" style={{ color: 'var(--accent)' }}>Meta Frent. (+{percentualAuto}%)</th>
+                        <th className="text-right" style={{ color: 'var(--text-muted)' }}>Realiz./Troc.</th>
+                        <th className="text-right" style={{ color: 'var(--accent)' }}>Meta Troc. (+{percentualAuto}%)</th>
+                        <th className="text-right" style={{ color: 'var(--text-muted)' }}>Total Posto</th>
+                        <th className="text-right" style={{ color: 'var(--accent)' }}>Meta Posto (+{percentualAuto}%)</th>
                         <th style={{ width: 32, textAlign: 'center' }}>WPP</th>
                       </tr>
                     </thead>
