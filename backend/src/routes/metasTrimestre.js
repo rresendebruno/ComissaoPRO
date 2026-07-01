@@ -138,10 +138,26 @@ router.get('/preview', auth, adminOnly, async (req, res) => {
       nova_frentista: r2(avg_frentista * fator),
       nova_trocador:  r2(avg_trocador  * fator),
       nova_posto:     r2(avg_posto     * fator),
+      // detalhe por período para o relatório PDF
+      detalhe: p.periodos.map(x => ({
+        periodo_id:  x.periodo_id,
+        total_posto: r2(x.total_posto),
+        per_frent:   x.qtd_frent > 0 ? r2(x.total_frent / x.qtd_frent) : null,
+        per_troc:    x.qtd_troc  > 0 ? r2(x.total_troc  / x.qtd_troc)  : null,
+        qtd_frent:   x.qtd_frent,
+        qtd_troc:    x.qtd_troc,
+      })),
     };
   });
 
-  res.json({ resultado, percentual: pct, qtd_periodos_selecionados: ids.length });
+  // Nomes dos períodos selecionados para exibir no relatório
+  const { rows: periodosNomes } = await query(
+    'SELECT id, nome FROM periodos WHERE id = ANY($1) ORDER BY data_inicio',
+    [ids]
+  );
+  const nomesPeriodos = Object.fromEntries(periodosNomes.map(p => [p.id, p.nome]));
+
+  res.json({ resultado, percentual: pct, qtd_periodos_selecionados: ids.length, nomesPeriodos });
 });
 
 // ── POST /aplicar ─────────────────────────────────────────────────────────────

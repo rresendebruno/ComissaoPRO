@@ -65,14 +65,15 @@ export default function PeriodoDetailPage() {
   const [deleting, setDeleting] = useState(false);
 
   // Metas automáticas (trimestre)
-  const [allPeriodos, setAllPeriodos]       = useState([]);
-  const [fonteIds, setFonteIds]             = useState([]);
-  const [percentualAuto, setPercentualAuto] = useState(5);
-  const [previewRows, setPreviewRows]       = useState(null);
+  const [allPeriodos, setAllPeriodos]         = useState([]);
+  const [fonteIds, setFonteIds]               = useState([]);
+  const [percentualAuto, setPercentualAuto]   = useState(5);
+  const [previewRows, setPreviewRows]         = useState(null);
+  const [nomesPeriodos, setNomesPeriodos]     = useState({});
   const [loadingAutoMeta, setLoadingAutoMeta] = useState(false);
   const [applyingAutoMeta, setApplyingAutoMeta] = useState(false);
-  const [autoMetaResult, setAutoMetaResult] = useState(null);
-  const [erroAutoMeta, setErroAutoMeta]     = useState('');
+  const [autoMetaResult, setAutoMetaResult]   = useState(null);
+  const [erroAutoMeta, setErroAutoMeta]       = useState('');
 
   const isAdmin = user?.role === 'admin';
 
@@ -144,6 +145,7 @@ export default function PeriodoDetailPage() {
         params: { periodo_ids: fonteIds.join(','), percentual: percentualAuto },
       });
       setPreviewRows(r.data.resultado.map(row => ({ ...row })));
+      setNomesPeriodos(r.data.nomesPeriodos || {});
     } catch (e) {
       setErroAutoMeta(e.response?.data?.error || 'Erro ao calcular preview');
     } finally { setLoadingAutoMeta(false); }
@@ -863,6 +865,9 @@ export default function PeriodoDetailPage() {
                       Média do realizado em {fonteIds.length} período(s) + {percentualAuto}% • Clique nos valores para editar
                     </div>
                   </div>
+                  <button className="btn btn-ghost btn-sm no-print" onClick={() => window.print()}>
+                    🖨️ Exportar PDF
+                  </button>
                 </div>
                 <div className="table-wrap">
                   <table style={{ fontSize: 12 }}>
@@ -952,6 +957,113 @@ export default function PeriodoDetailPage() {
           </div>
         )}
       </div>
+
+      {/* ── Relatório PDF Metas Trimestrais (print-only) ── */}
+      {previewRows && (
+        <div className="print-only" style={{ fontFamily: 'Arial, sans-serif', fontSize: 11, color: '#000', padding: 0 }}>
+          {/* Cabeçalho */}
+          <div style={{ borderBottom: '2px solid #1e293b', paddingBottom: 10, marginBottom: 16 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: '#1e293b' }}>Relatório — Metas Trimestrais</div>
+            <div style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
+              <strong>Período destino:</strong> {periodo?.nome} &nbsp;|&nbsp;
+              <strong>Ajuste:</strong> +{percentualAuto}% &nbsp;|&nbsp;
+              <strong>Referências:</strong> {fonteIds.map(fid => nomesPeriodos[fid] || `#${fid}`).join(' · ')}
+            </div>
+            <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+              Gerado em {new Date().toLocaleString('pt-BR')}
+            </div>
+          </div>
+
+          {/* Tabela por posto */}
+          {previewRows.map(r => (
+            <div key={r.posto_id} style={{ marginBottom: 18, pageBreakInside: 'avoid' }}>
+              <div style={{ background: '#1e293b', color: '#fff', padding: '4px 10px', fontWeight: 700, fontSize: 12, borderRadius: '4px 4px 0 0' }}>
+                {r.codigo} — {r.posto_nome}
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10.5 }}>
+                <thead>
+                  <tr style={{ background: '#f1f5f9' }}>
+                    <th style={{ padding: '4px 8px', textAlign: 'left', border: '1px solid #cbd5e1' }}>Indicador</th>
+                    {fonteIds.map(fid => (
+                      <th key={fid} style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1' }}>
+                        {nomesPeriodos[fid] || `#${fid}`}
+                      </th>
+                    ))}
+                    <th style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', background: '#e2e8f0' }}>Média</th>
+                    <th style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', background: '#dbeafe', color: '#1d4ed8', fontWeight: 800 }}>
+                      Nova Meta (+{percentualAuto}%)
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Linha Frentista */}
+                  <tr>
+                    <td style={{ padding: '4px 8px', border: '1px solid #cbd5e1', fontWeight: 600 }}>👷 Por Frentista</td>
+                    {fonteIds.map(fid => {
+                      const d = r.detalhe?.find(x => String(x.periodo_id) === String(fid));
+                      return (
+                        <td key={fid} style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', fontFamily: 'monospace' }}>
+                          {d?.per_frent != null ? `R$ ${Number(d.per_frent).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
+                          {d?.qtd_frent > 0 && <div style={{ fontSize: 9, color: '#888' }}>{d.qtd_frent} frent.</div>}
+                        </td>
+                      );
+                    })}
+                    <td style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', background: '#f8fafc', fontFamily: 'monospace' }}>
+                      R$ {Number(r.avg_frentista).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', background: '#eff6ff', fontWeight: 800, fontFamily: 'monospace', color: '#1d4ed8' }}>
+                      R$ {Number(r.nova_frentista).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                  {/* Linha Trocador */}
+                  <tr>
+                    <td style={{ padding: '4px 8px', border: '1px solid #cbd5e1', fontWeight: 600 }}>🔧 Por Trocador</td>
+                    {fonteIds.map(fid => {
+                      const d = r.detalhe?.find(x => String(x.periodo_id) === String(fid));
+                      return (
+                        <td key={fid} style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', fontFamily: 'monospace' }}>
+                          {d?.per_troc != null ? `R$ ${Number(d.per_troc).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
+                          {d?.qtd_troc > 0 && <div style={{ fontSize: 9, color: '#888' }}>{d.qtd_troc} troc.</div>}
+                        </td>
+                      );
+                    })}
+                    <td style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', background: '#f8fafc', fontFamily: 'monospace' }}>
+                      R$ {Number(r.avg_trocador).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', background: '#eff6ff', fontWeight: 800, fontFamily: 'monospace', color: '#1d4ed8' }}>
+                      R$ {Number(r.nova_trocador).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                  {/* Linha Posto */}
+                  <tr style={{ background: '#f8fafc' }}>
+                    <td style={{ padding: '4px 8px', border: '1px solid #cbd5e1', fontWeight: 600 }}>🏪 Total Posto</td>
+                    {fonteIds.map(fid => {
+                      const d = r.detalhe?.find(x => String(x.periodo_id) === String(fid));
+                      return (
+                        <td key={fid} style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', fontFamily: 'monospace' }}>
+                          {d ? `R$ ${Number(d.total_posto).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—'}
+                        </td>
+                      );
+                    })}
+                    <td style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', background: '#f1f5f9', fontFamily: 'monospace' }}>
+                      R$ {Number(r.avg_posto).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right', border: '1px solid #cbd5e1', background: '#eff6ff', fontWeight: 800, fontFamily: 'monospace', color: '#1d4ed8' }}>
+                      R$ {Number(r.nova_posto).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+          {/* Rodapé */}
+          <div style={{ marginTop: 20, borderTop: '1px solid #cbd5e1', paddingTop: 8, fontSize: 10, color: '#888' }}>
+            Cálculo: média do realizado (valor_final) em cada período + {percentualAuto}% de ajuste.
+            Frentistas e Trocadores: total vendido ÷ quantidade de colaboradores distintos no período.
+          </div>
+        </div>
+      )}
 
       {/* ── Modais ── */}
 
