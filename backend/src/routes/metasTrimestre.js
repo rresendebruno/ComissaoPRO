@@ -249,6 +249,16 @@ router.post('/aplicar-valores', auth, adminOnly, async (req, res) => {
   if (!pRows.length) return res.status(404).json({ error: 'Período destino não encontrado' });
   const periodoDestino = pRows[0];
 
+  // Busca metas atuais antes de sobrescrever (para mostrar no WPP)
+  const postoIds = metasInput.map(m => m.posto_id);
+  const { rows: metasAtuais } = await query(
+    `SELECT posto_id, meta_frentista, meta_trocador, meta_posto
+     FROM metas WHERE periodo_id=$1 AND posto_id = ANY($2)`,
+    [periodo_destino_id, postoIds]
+  );
+  const metasAtuaisIdx = {};
+  for (const ma of metasAtuais) metasAtuaisIdx[ma.posto_id] = ma;
+
   let aplicadas = 0;
   for (const m of metasInput) {
     await query(
@@ -268,12 +278,26 @@ router.post('/aplicar-valores', auth, adminOnly, async (req, res) => {
   if (notificar_whatsapp) {
     for (const m of metasInput) {
       if (!m.whatsapp_group_id) continue;
+
+      const antiga = metasAtuaisIdx[m.posto_id];
+      const nf = parseFloat(m.meta_frentista) || 0;
+      const nt = parseFloat(m.meta_trocador)  || 0;
+      const np = parseFloat(m.meta_posto)     || 0;
+      const of_ = parseFloat(antiga?.meta_frentista) || 0;
+      const ot  = parseFloat(antiga?.meta_trocador)  || 0;
+      const op  = parseFloat(antiga?.meta_posto)     || 0;
+
+      const seta = (antigo, novo) => antigo > 0
+        ? `~${fmt(antigo)}~ → *${fmt(novo)}*`
+        : `*${fmt(novo)}*`;
+
       const msg =
-        `🎯 *Novas Metas — ${periodoDestino.nome}*\n\n` +
+        `🎯 *Atualização de Metas — ${periodoDestino.nome}*\n\n` +
         `📍 ${m.codigo} — ${m.posto_nome}\n\n` +
-        `👷 Frentistas: *${fmt(parseFloat(m.meta_frentista) || 0)}*\n` +
-        `🔧 Trocadores:  *${fmt(parseFloat(m.meta_trocador)  || 0)}*\n` +
-        `🏪 Posto:       *${fmt(parseFloat(m.meta_posto)     || 0)}*`;
+        `👷 Frentistas: ${seta(of_, nf)}\n` +
+        `🔧 Trocadores:  ${seta(ot, nt)}\n` +
+        `🏪 Posto:       ${seta(op, np)}`;
+
       try {
         await enviarTextoParaGrupo(m.whatsapp_group_id, msg);
         wppResultados.push({ posto: m.codigo, status: 'enviado' });
