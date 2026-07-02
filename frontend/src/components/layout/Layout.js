@@ -74,6 +74,7 @@ export default function Layout() {
             {link('/periodos',   IC.periodos,   'Períodos')}
             {link('/comissoes',  IC.comissoes,  'Comissões')}
             {link('/relatorios', IC.relatorios, 'Relatórios')}
+            {link('/relatorio-financeiro', IC.comissoes, 'Rel. Financeiro')}
           </div>
           <div className="nav-group">
             <div className="nav-label">Cadastros</div>

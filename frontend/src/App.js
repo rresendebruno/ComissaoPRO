@@ -12,6 +12,7 @@ import PostoDetailPage from './pages/PostoDetailPage';
 import UsuariosPage from './pages/UsuariosPage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import RelatoriosPage from './pages/RelatoriosPage';
+import RelatorioFinanceiroPage from './pages/RelatorioFinanceiroPage';
 import IgnoradosPage from './pages/IgnoradosPage';
 import LucroLiquidoPage from './pages/LucroLiquidoPage';
 import AnaliseLLPage from './pages/AnaliseLLPage';
@@ -42,6 +43,7 @@ export default function App() {
             <Route path="periodos/:id" element={<PeriodoDetailPage />} />
             <Route path="comissoes" element={<ComissoesPage />} />
             <Route path="relatorios" element={<RelatoriosPage />} />
+            <Route path="relatorio-financeiro" element={<RelatorioFinanceiroPage />} />
             <Route path="postos" element={<PostosPage />} />
             <Route path="postos/:id" element={<PostoDetailPage />} />
             <Route path="usuarios" element={<Guard admin><UsuariosPage /></Guard>} />
