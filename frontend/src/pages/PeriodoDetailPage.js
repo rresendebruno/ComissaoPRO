@@ -38,6 +38,14 @@ export default function PeriodoDetailPage() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
 
+  // Inserção manual de vendas
+  const linhaVazia = () => ({ funcionario: '', tipo: 'frentista', produto: '', quantidade: 1, valor_unitario: '', valor_final: '' });
+  const [showVendaManual, setShowVendaManual] = useState(false);
+  const [vendaManualPosto, setVendaManualPosto] = useState('');
+  const [vendaManualLinhas, setVendaManualLinhas] = useState([linhaVazia()]);
+  const [savingVendaManual, setSavingVendaManual] = useState(false);
+  const [vendaManualErro, setVendaManualErro] = useState('');
+
   // Meta modal
   const [showMetaModal, setShowMetaModal] = useState(false);
   const [metaForm, setMetaForm] = useState({ posto_id: '', meta_frentista: '', meta_trocador: '', meta_posto: '' });
@@ -180,6 +188,51 @@ export default function PeriodoDetailPage() {
     } catch (e) {
       setAutoMetaResult({ ok: false, msg: e.response?.data?.error || 'Erro ao aplicar metas' });
     } finally { setApplyingAutoMeta(false); }
+  };
+
+  // ── Venda manual
+  const saveVendaManual = async () => {
+    if (!vendaManualPosto) { setVendaManualErro('Selecione um posto'); return; }
+    const linhasValidas = vendaManualLinhas.filter(l =>
+      l.funcionario.trim() && l.produto.trim() && parseFloat(l.valor_final) > 0
+    );
+    if (!linhasValidas.length) {
+      setVendaManualErro('Preencha ao menos uma linha com funcionário, produto e valor final');
+      return;
+    }
+    setSavingVendaManual(true); setVendaManualErro('');
+    try {
+      await axios.post(`${API}/periodos/${id}/vendas/manual`, {
+        vendas: linhasValidas.map(l => ({
+          posto_id:       vendaManualPosto,
+          funcionario:    l.funcionario.trim(),
+          tipo_funcionario: l.tipo,
+          produto:        l.produto.trim(),
+          quantidade:     parseFloat(l.quantidade) || 1,
+          valor_unitario: parseFloat(l.valor_unitario) || 0,
+          valor_bruto:    parseFloat(l.valor_final) || 0,
+          valor_desconto: 0,
+          valor_acrescimo: 0,
+          valor_final:    parseFloat(l.valor_final) || 0,
+        })),
+      });
+      setShowVendaManual(false);
+      setVendaManualPosto('');
+      setVendaManualLinhas([linhaVazia()]);
+      loadVendas();
+    } catch (e) {
+      setVendaManualErro(e.response?.data?.error || 'Erro ao inserir vendas');
+    } finally { setSavingVendaManual(false); }
+  };
+
+  const deleteVenda = async (vendaId) => {
+    if (!window.confirm('Remover esta venda?')) return;
+    try {
+      await axios.delete(`${API}/periodos/${id}/vendas/${vendaId}`);
+      loadVendas();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Erro ao remover venda');
+    }
   };
 
   // ── Import CSV
@@ -581,6 +634,16 @@ export default function PeriodoDetailPage() {
                 <div className="card-sub">{vendasTotal} registros no total</div>
               </div>
               <div className="filters" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                {isAdmin && periodo?.status !== 'fechado' && (
+                  <button className="btn btn-primary btn-sm" onClick={() => {
+                    setVendaManualPosto('');
+                    setVendaManualLinhas([linhaVazia()]);
+                    setVendaManualErro('');
+                    setShowVendaManual(true);
+                  }}>
+                    ➕ Venda Manual
+                  </button>
+                )}
                 <select value={filterPosto} onChange={e => { setFilterPosto(e.target.value); setPage(1); }} style={{ maxWidth: 180 }}>
                   <option value="">Todos os postos</option>
                   {postos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.nome}</option>)}
@@ -626,13 +689,23 @@ export default function PeriodoDetailPage() {
                         <td className="text-right mono bold">{fmt(v.valor_final)}</td>
                         {isAdmin && (
                           <td>
-                            {!especial ? (
-                              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => tornarEspecial(v)}>
-                                ★ Tornar especial
-                              </button>
-                            ) : (
-                              <span style={{ fontSize: 11, color: 'var(--amber)' }}>★ Especial</span>
-                            )}
+                            <div className="flex gap-8" style={{ alignItems: 'center' }}>
+                              {!especial ? (
+                                <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => tornarEspecial(v)}>
+                                  ★ Tornar especial
+                                </button>
+                              ) : (
+                                <span style={{ fontSize: 11, color: 'var(--amber)' }}>★ Especial</span>
+                              )}
+                              {periodo?.status !== 'fechado' && (
+                                <button
+                                  className="btn btn-danger btn-sm"
+                                  style={{ fontSize: 11, padding: '2px 7px' }}
+                                  onClick={() => deleteVenda(v.id)}
+                                  title="Remover venda"
+                                >✕</button>
+                              )}
+                            </div>
                           </td>
                         )}
                       </tr>
@@ -1184,6 +1257,118 @@ export default function PeriodoDetailPage() {
             <button className="btn btn-ghost" onClick={() => setMotivoModal(null)}>Cancelar</button>
             <button className="btn btn-danger" onClick={confirmarDesqualificacao}>
               Confirmar Desqualificação
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {showVendaManual && (
+        <Modal title="Adicionar Vendas Manualmente" onClose={() => setShowVendaManual(false)}>
+          <div className="modal-body">
+            {vendaManualErro && <div className="alert alert-error" style={{ marginBottom: 12 }}>{vendaManualErro}</div>}
+
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label>Posto</label>
+              <select value={vendaManualPosto} onChange={e => setVendaManualPosto(e.target.value)}>
+                <option value="">Selecione o posto…</option>
+                {postos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.nome}</option>)}
+              </select>
+            </div>
+
+            <datalist id="dl-funcionarios">
+              {funcionarios.map((f, i) => <option key={i} value={f.nome} />)}
+            </datalist>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'var(--surface2)' }}>
+                    <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600 }}>Funcionário</th>
+                    <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600 }}>Tipo</th>
+                    <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 600 }}>Produto</th>
+                    <th style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, minWidth: 70 }}>Qtde</th>
+                    <th style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, minWidth: 90 }}>Vl. Final (R$)</th>
+                    <th style={{ width: 32 }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {vendaManualLinhas.map((l, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '4px 6px' }}>
+                        <input
+                          list="dl-funcionarios"
+                          placeholder="Nome do funcionário"
+                          value={l.funcionario}
+                          onChange={e => setVendaManualLinhas(prev => prev.map((x, j) => j === i ? { ...x, funcionario: e.target.value } : x))}
+                          style={{ width: '100%', minWidth: 150 }}
+                        />
+                      </td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <select
+                          value={l.tipo}
+                          onChange={e => setVendaManualLinhas(prev => prev.map((x, j) => j === i ? { ...x, tipo: e.target.value } : x))}
+                          style={{ width: '100%' }}
+                        >
+                          <option value="frentista">Frentista</option>
+                          <option value="trocador">Trocador</option>
+                          <option value="gerente">Gerente</option>
+                        </select>
+                      </td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <input
+                          placeholder="Produto"
+                          value={l.produto}
+                          onChange={e => setVendaManualLinhas(prev => prev.map((x, j) => j === i ? { ...x, produto: e.target.value } : x))}
+                          style={{ width: '100%', minWidth: 130 }}
+                        />
+                      </td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <input
+                          type="number" min="0.001" step="0.001" placeholder="1"
+                          value={l.quantidade}
+                          onChange={e => setVendaManualLinhas(prev => prev.map((x, j) => j === i ? { ...x, quantidade: e.target.value } : x))}
+                          style={{ width: '100%', textAlign: 'right' }}
+                        />
+                      </td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <input
+                          type="number" min="0" step="0.01" placeholder="0,00"
+                          value={l.valor_final}
+                          onChange={e => setVendaManualLinhas(prev => prev.map((x, j) => j === i ? { ...x, valor_final: e.target.value } : x))}
+                          style={{ width: '100%', textAlign: 'right' }}
+                        />
+                      </td>
+                      <td style={{ padding: '4px 6px', textAlign: 'center' }}>
+                        {vendaManualLinhas.length > 1 && (
+                          <button
+                            className="btn btn-danger btn-sm"
+                            style={{ padding: '2px 7px', fontSize: 13 }}
+                            onClick={() => setVendaManualLinhas(prev => prev.filter((_, j) => j !== i))}
+                          >✕</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ marginTop: 10 }}
+              onClick={() => setVendaManualLinhas(prev => [...prev, linhaVazia()])}
+            >
+              + Adicionar linha
+            </button>
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-ghost" onClick={() => setShowVendaManual(false)}>Cancelar</button>
+            <button
+              className="btn btn-primary"
+              disabled={savingVendaManual || !vendaManualPosto}
+              onClick={saveVendaManual}
+            >
+              {savingVendaManual ? 'Salvando…' : `Inserir ${vendaManualLinhas.filter(l => l.funcionario.trim() && l.produto.trim() && parseFloat(l.valor_final) > 0).length || 0} venda(s)`}
             </button>
           </div>
         </Modal>

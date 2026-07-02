@@ -663,6 +663,53 @@ router.get('/:id/vendas', auth, async (req, res) => {
   res.json({ data: rows, total: parseInt(total[0].count), page: parseInt(page), limit: limitVal });
 });
 
+// ── INSERÇÃO MANUAL DE VENDAS ─────────────────────────────────────────────────
+
+router.post('/:id/vendas/manual', auth, adminOnly, async (req, res) => {
+  const { rows: pRows } = await query('SELECT status FROM periodos WHERE id=$1', [req.params.id]);
+  if (!pRows.length) return res.status(404).json({ error: 'Período não encontrado' });
+  if (pRows[0].status === 'fechado') return res.status(400).json({ error: 'Período fechado — inserção bloqueada' });
+
+  const { vendas: linhas } = req.body;
+  if (!linhas?.length) return res.status(400).json({ error: 'Nenhuma venda informada' });
+
+  await withTransaction(async (client) => {
+    const BATCH = 200;
+    for (let i = 0; i < linhas.length; i += BATCH) {
+      const batch = linhas.slice(i, i + BATCH);
+      const vals  = batch.map((_, j) => {
+        const b = j * 11;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9},$${b+10},$${b+11})`;
+      }).join(',');
+      await client.query(
+        `INSERT INTO vendas
+           (periodo_id,posto_id,funcionario,tipo_funcionario,produto,
+            quantidade,valor_unitario,valor_bruto,valor_desconto,valor_acrescimo,valor_final)
+         VALUES ${vals}`,
+        batch.flatMap(v => [
+          req.params.id, v.posto_id,
+          String(v.funcionario   || '').trim(),
+          v.tipo_funcionario     || 'frentista',
+          String(v.produto       || '').trim(),
+          parseFloat(v.quantidade)    || 0,
+          parseFloat(v.valor_unitario)|| 0,
+          parseFloat(v.valor_bruto)   || 0,
+          parseFloat(v.valor_desconto)|| 0,
+          parseFloat(v.valor_acrescimo)||0,
+          parseFloat(v.valor_final)   || 0,
+        ])
+      );
+    }
+  });
+
+  res.json({ success: true, inseridas: linhas.length });
+});
+
+router.delete('/:id/vendas/:vendaId', auth, adminOnly, async (req, res) => {
+  await query('DELETE FROM vendas WHERE id=$1 AND periodo_id=$2', [req.params.vendaId, req.params.id]);
+  res.json({ success: true });
+});
+
 // ── TODOS OS FUNCIONÁRIOS DO PERÍODO ─────────────────────────────────────────
 
 router.get('/:id/todos-funcionarios', auth, async (req, res) => {
