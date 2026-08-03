@@ -490,6 +490,34 @@ input::placeholder { color: var(--text-muted); }
 @media print {
   @page { size: A4 landscape; margin: 10mm 8mm; }
 
+  /* Sem isso, o navegador descarta background-color/gradientes na impressão
+     (ex.: barras de progresso, círculos de ícone, badges coloridos ficam em branco) */
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Variáveis do tema escuro trocadas por versões claras só para impressão,
+     assim elementos que usam var(--surface2)/var(--border) etc. (trilhas de
+     barra, cards, ícones) não saem escuros/invisíveis no papel */
+  :root {
+    --bg: #fff;
+    --surface: #fff;
+    --surface2: #eef0f4;
+    --border: #d1d5db;
+    --border-light: #e5e7eb;
+    --text: #000;
+    --text-muted: #555;
+    --text-dim: #333;
+    --green: #16a34a;
+    --green-bg: rgba(22,163,74,0.12);
+    --red: #dc2626;
+    --red-bg: rgba(220,38,38,0.12);
+    --amber: #d97706;
+    --amber-bg: rgba(217,119,6,0.12);
+  }
+
   /* ── Layout ── */
   .sidebar, .topbar, .mobile-bottom-nav, .mobile-menu-btn, .no-print { display: none !important; }
   .main { margin-left: 0 !important; }
