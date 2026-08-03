@@ -380,10 +380,16 @@ router.get('/bi', auth, async (req, res) => {
     ORDER BY lucro DESC
   `, [mes]);
 
-  // Top 30 produtos
+  // Top 30 produtos (com grupo raiz: Combustíveis, Agregados, Bebidas...)
   const { rows: topProdutos } = await query(`
+    WITH RECURSIVE raiz AS (
+      SELECT id, nome FROM ll_categorias WHERE pai_id IS NULL
+      UNION ALL
+      SELECT c.id, r.nome FROM ll_categorias c JOIN raiz r ON c.pai_id = r.id
+    )
     SELECT lp.nome AS produto,
-           COALESCE(lc.nome, '—') AS categoria,
+           COALESCE(r.nome, 'Sem Categoria') AS categoria,
+           COALESCE(lc.nome, '—') AS subcategoria,
            SUM(li.quantidade)   AS qtd,
            SUM(li.valor_bruto)  AS vbruto,
            SUM(li.lucro_bruto)  AS lucro,
@@ -393,8 +399,9 @@ router.get('/bi', auth, async (req, res) => {
     FROM ll_itens li
     JOIN ll_produtos lp ON lp.id = li.produto_id
     LEFT JOIN ll_categorias lc ON lc.id = lp.categoria_id
+    LEFT JOIN raiz r ON r.id = lp.categoria_id
     WHERE TO_CHAR(li.data, 'YYYY-MM') = $1
-    GROUP BY lp.id, lp.nome, lc.nome
+    GROUP BY lp.id, lp.nome, lc.nome, r.nome
     ORDER BY lucro DESC
     LIMIT 30
   `, [mes]);

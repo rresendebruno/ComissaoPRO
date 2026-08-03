@@ -20,6 +20,14 @@ const labelMesLongo = (mes) => {
 
 const fmtPct = (v) => `${Number(v).toFixed(1)}%`;
 
+const corCategoria = (cat) => {
+  const c = (cat || '').toUpperCase();
+  if (c.includes('COMBUST')) return '#4f6ef7';
+  if (c.includes('AGREGADO')) return '#f59e0b';
+  if (c.includes('BEBIDA')) return '#06b6d4';
+  return '#94a3b8';
+};
+
 const CORES = [
   '#4f6ef7','#22c55e','#f59e0b','#ef4444','#8b5cf6',
   '#06b6d4','#ec4899','#14b8a6','#f97316','#6366f1',
@@ -99,7 +107,6 @@ export default function AnaliseLLPage() {
 
   const maxCat    = Math.max(...porCategoria.map(r => r.lucro), 1);
   const maxPosto  = Math.max(...porPosto.map(r => r.lucro), 1);
-  const maxProd   = Math.max(...topProdutos.map(r => r.lucro), 1);
   const maxEvolucao = Math.max(...evolucao.map(r => r.lucro), 1);
 
   return (
@@ -294,6 +301,54 @@ export default function AnaliseLLPage() {
                     </table>
                   </div>
                 </div>
+
+                {/* Top Produtos — com categoria (Combustível, Agregados, Bebidas...) */}
+                {topProdutos.length > 0 && (
+                  <div className="card" style={{ marginTop: 16 }}>
+                    <div className="card-header">
+                      <div className="card-title">Top Produtos — Lucro Bruto por Categoria</div>
+                    </div>
+                    <div className="table-wrap">
+                      <table style={{ fontSize: 12 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ width: 28 }}>#</th>
+                            <th>Produto</th>
+                            <th>Categoria</th>
+                            <th>Subcategoria</th>
+                            <th className="text-right">Qtd</th>
+                            <th className="text-right">Venda Bruta</th>
+                            <th className="text-right">Lucro Bruto</th>
+                            <th className="text-right">Margem</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {topProdutos.map((r, i) => {
+                            const corMargem = r.margem >= 20 ? '#22c55e' : r.margem >= 10 ? '#f59e0b' : '#ef4444';
+                            const corCat = corCategoria(r.categoria);
+                            return (
+                              <tr key={`${r.produto}-${i}`}>
+                                <td style={{ color: 'var(--text-muted)', fontWeight: 700 }}>{i + 1}</td>
+                                <td style={{ fontWeight: 600 }}>{r.produto}</td>
+                                <td>
+                                  <span style={{
+                                    fontSize: 10, padding: '2px 8px', borderRadius: 99, fontWeight: 700,
+                                    background: `${corCat}18`, color: corCat,
+                                  }}>{r.categoria}</span>
+                                </td>
+                                <td style={{ color: 'var(--text-muted)' }}>{r.subcategoria}</td>
+                                <td className="text-right mono">{fmt(r.qtd)}</td>
+                                <td className="text-right mono">{fmt(r.vbruto)}</td>
+                                <td className="text-right mono" style={{ fontWeight: 700 }}>{fmt(r.lucro)}</td>
+                                <td className="text-right mono" style={{ fontWeight: 700, color: corMargem }}>{fmtPct(r.margem)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </>
