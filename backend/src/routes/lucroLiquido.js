@@ -359,6 +359,25 @@ router.get('/bi', auth, async (req, res) => {
     ORDER BY lucro DESC
   `, [mes]);
 
+  // Por posto x categoria raiz (lucro bruto de cada posto separado por Combustíveis, Agregados, Bebidas...)
+  const { rows: porPostoCategoria } = await query(`
+    WITH RECURSIVE raiz AS (
+      SELECT id, nome FROM ll_categorias WHERE pai_id IS NULL
+      UNION ALL
+      SELECT c.id, r.nome FROM ll_categorias c JOIN raiz r ON c.pai_id = r.id
+    )
+    SELECT p.codigo,
+           COALESCE(r.nome, 'Sem Categoria') AS categoria,
+           SUM(li.lucro_bruto) AS lucro
+    FROM ll_itens li
+    JOIN postos p ON p.id = li.posto_id
+    LEFT JOIN ll_produtos lp ON lp.id = li.produto_id
+    LEFT JOIN raiz r ON r.id = lp.categoria_id
+    WHERE TO_CHAR(li.data, 'YYYY-MM') = $1
+    GROUP BY p.codigo, r.nome
+    ORDER BY p.codigo
+  `, [mes]);
+
   // Por categoria raiz (sobe a árvore até a raiz)
   const { rows: porCategoria } = await query(`
     WITH RECURSIVE raiz AS (
@@ -431,6 +450,7 @@ router.get('/bi', auth, async (req, res) => {
       registros: n(k?.registros),
     },
     porPosto:     porPosto.map(r     => ({ ...r, vbruto: n(r.vbruto), lucro: n(r.lucro), margem: n(r.margem) })),
+    porPostoCategoria: porPostoCategoria.map(r => ({ ...r, lucro: n(r.lucro) })),
     porCategoria: porCategoria.map(r => ({ ...r, vbruto: n(r.vbruto), lucro: n(r.lucro), margem: n(r.margem) })),
     topProdutos:  topProdutos.map(r  => ({ ...r, qtd: n(r.qtd), vbruto: n(r.vbruto), lucro: n(r.lucro), margem: n(r.margem) })),
     evolucao:     evolucao.map(r     => ({ mes: r.mes, lucro: n(r.lucro), vbruto: n(r.vbruto), pct: Math.round(n(r.lucro) / maxEvolucao * 100) })),

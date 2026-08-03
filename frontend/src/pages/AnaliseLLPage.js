@@ -103,11 +103,19 @@ export default function AnaliseLLPage() {
       .finally(() => setLoading(false));
   }, [mesSel]);
 
-  const { kpis, porCategoria = [], porPosto = [], topProdutos = [], evolucao = [] } = dados || {};
+  const { kpis, porCategoria = [], porPosto = [], porPostoCategoria = [], topProdutos = [], evolucao = [] } = dados || {};
 
   const maxCat    = Math.max(...porCategoria.map(r => r.lucro), 1);
   const maxPosto  = Math.max(...porPosto.map(r => r.lucro), 1);
   const maxEvolucao = Math.max(...evolucao.map(r => r.lucro), 1);
+
+  // Pivô: lucro bruto de cada posto separado por categoria (Combustíveis, Agregados, Bebidas...)
+  const categoriasPosto = porCategoria.map(c => c.categoria);
+  const pivotPosto = {};
+  for (const r of porPostoCategoria) {
+    if (!pivotPosto[r.codigo]) pivotPosto[r.codigo] = {};
+    pivotPosto[r.codigo][r.categoria] = r.lucro;
+  }
 
   return (
     <>
@@ -208,6 +216,59 @@ export default function AnaliseLLPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Postos detalhado por categoria */}
+                {categoriasPosto.length > 0 && (
+                  <div className="card" style={{ marginBottom: 16 }}>
+                    <div className="card-header">
+                      <div className="card-title">Lucro por Posto — Detalhe por Categoria</div>
+                    </div>
+                    <div className="table-wrap">
+                      <table style={{ fontSize: 12 }}>
+                        <thead>
+                          <tr>
+                            <th>Posto</th>
+                            {categoriasPosto.map(cat => (
+                              <th key={cat} className="text-right" style={{ color: corCategoria(cat) }}>{cat}</th>
+                            ))}
+                            <th className="text-right">Total</th>
+                            <th className="text-right">Margem</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {porPosto.map(r => {
+                            const corMargem = r.margem >= 20 ? '#22c55e' : r.margem >= 10 ? '#f59e0b' : '#ef4444';
+                            return (
+                              <tr key={r.codigo}>
+                                <td style={{ fontWeight: 700 }}>{r.codigo}</td>
+                                {categoriasPosto.map(cat => (
+                                  <td key={cat} className="text-right mono">
+                                    {fmt(pivotPosto[r.codigo]?.[cat] || 0)}
+                                  </td>
+                                ))}
+                                <td className="text-right mono" style={{ fontWeight: 700 }}>{fmt(r.lucro)}</td>
+                                <td className="text-right mono" style={{ fontWeight: 700, color: corMargem }}>{fmtPct(r.margem)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <td style={{ fontWeight: 800 }}>TOTAL</td>
+                            {categoriasPosto.map(cat => {
+                              const totalCat = porCategoria.find(c => c.categoria === cat)?.lucro || 0;
+                              return (
+                                <td key={cat} className="text-right mono" style={{ fontWeight: 800 }}>{fmt(totalCat)}</td>
+                              );
+                            })}
+                            <td className="text-right mono" style={{ fontWeight: 800 }}>{fmt(kpis.totalLucro)}</td>
+                            <td className="text-right mono" style={{ fontWeight: 800 }}>{fmtPct(kpis.margem)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
                 {/* Evolução mensal */}
                 {evolucao.length > 1 && (
