@@ -90,9 +90,9 @@ export default function PostoDetailPage() {
         <div className="card">
           <div className="card-header">
             <div>
-              <div className="card-title">Produtos com Comissão Especial</div>
+              <div className="card-title">Produtos com Premiação Especial</div>
               <div className="card-sub">
-                Produtos que pagam valor fixo por unidade — além da comissão normal por faixa de meta
+                Produtos que pagam valor fixo por unidade — além da premiação normal por faixa de meta
               </div>
             </div>
             {isAdmin && (
@@ -180,20 +180,20 @@ export default function PostoDetailPage() {
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>Comissão Frentista (R$/un)</label>
+                <label>Premiação Frentista (R$/un)</label>
                 <input type="number" min="0" step="0.01" placeholder="0,00"
                   value={prodForm.comissao_frentista}
                   onChange={e => setProdForm({ ...prodForm, comissao_frentista: e.target.value })} />
               </div>
               <div className="form-group">
-                <label>Comissão Trocador (R$/un)</label>
+                <label>Premiação Trocador (R$/un)</label>
                 <input type="number" min="0" step="0.01" placeholder="0,00"
                   value={prodForm.comissao_trocador}
                   onChange={e => setProdForm({ ...prodForm, comissao_trocador: e.target.value })} />
               </div>
             </div>
             <div className="form-group" style={{ maxWidth: '50%' }}>
-              <label>Comissão Gerente (R$/un)</label>
+              <label>Premiação Gerente (R$/un)</label>
               <input type="number" min="0" step="0.01" placeholder="0,00"
                 value={prodForm.comissao_gerente}
                 onChange={e => setProdForm({ ...prodForm, comissao_gerente: e.target.value })} />

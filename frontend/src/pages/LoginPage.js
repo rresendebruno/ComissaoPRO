@@ -10,7 +10,7 @@ export default function LoginPage() {
   const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [branding, setBranding] = useState({ nome: 'ComissõesPRO', logo: null });
+  const [branding, setBranding] = useState({ nome: 'PremiaçõesPRO', logo: null });
 
   // Carrega config do banco (endpoint público via auth — ainda precisa do token,
   // mas na tela de login fazemos sem token e o backend não exige auth para /config GET
@@ -18,13 +18,13 @@ export default function LoginPage() {
   useEffect(() => {
     axios.get(`${API}/config`).then(r => {
       setBranding(r.data);
-      document.title = r.data.nome || 'ComissõesPRO';
+      document.title = r.data.nome || 'PremiaçõesPRO';
     }).catch(() => {});
 
     const handler = (e) => {
       if (e.detail) {
         setBranding(e.detail);
-        document.title = e.detail.nome || 'ComissõesPRO';
+        document.title = e.detail.nome || 'PremiaçõesPRO';
       }
     };
     window.addEventListener('config-updated', handler);
@@ -51,8 +51,8 @@ export default function LoginPage() {
           ) : (
             <div className="icon">⛽</div>
           )}
-          <h1>{branding.nome || 'ComissõesPRO'}</h1>
-          <p>Sistema de Comissionamento</p>
+          <h1>{branding.nome || 'PremiaçõesPRO'}</h1>
+          <p>Sistema de Premiações</p>
         </div>
         {error && <div className="alert alert-error">{error}</div>}
         <form onSubmit={submit}>

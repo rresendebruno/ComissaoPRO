@@ -41,7 +41,7 @@ export default function IgnoradosPage() {
       <div className="topbar">
         <div>
           <div className="topbar-title">Itens Ignorados</div>
-          <div className="topbar-sub">Produtos e funcionários excluídos do cálculo de comissões e da importação CSV</div>
+          <div className="topbar-sub">Produtos e funcionários excluídos do cálculo de premiações e da importação CSV</div>
         </div>
       </div>
 

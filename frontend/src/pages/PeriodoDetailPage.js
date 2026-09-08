@@ -440,7 +440,7 @@ export default function PeriodoDetailPage() {
             </button>
           )}
           <button className="btn btn-primary btn-sm" onClick={() => navigate('/comissoes?periodo=' + id)}>
-            Ver Comissões →
+            Ver Premiações →
           </button>
         </div>
       </div>
@@ -468,7 +468,7 @@ export default function PeriodoDetailPage() {
                 <div className="card-title">Metas por Posto</div>
                 <div className="card-sub">
                   Meta frentista e trocador = valor individual por colaborador.
-                  Meta do posto = base para comissão do gerente.
+                  Meta do posto = base para premiação do gerente.
                   {diasInfo && <span style={{ color: 'var(--amber)', marginLeft: 6 }}>
                     Metas efetivas com pro rata de {(diasInfo.fator * 100).toFixed(1)}% ({diasInfo.corridos}/{diasInfo.total} dias).
                   </span>}
@@ -745,8 +745,8 @@ export default function PeriodoDetailPage() {
               <div>
                 <div className="card-title">Desqualificados</div>
                 <div className="card-sub">
-                  Funcionários desqualificados têm comissão zerada no relatório.
-                  O motivo fica visível no relatório de comissões.
+                  Funcionários desqualificados têm premiação zerada no relatório.
+                  O motivo fica visível no relatório de premiações.
                 </div>
               </div>
               <select value={filterDesqPosto} onChange={e => setFilterDesqPosto(e.target.value)} style={{ maxWidth: 200 }}>
@@ -759,7 +759,7 @@ export default function PeriodoDetailPage() {
               <>
                 {desqualificados.length > 0 && (
                   <div style={{ padding: '8px 16px', background: 'rgba(239,68,68,0.06)', borderBottom: '1px solid var(--border)', fontSize: 12, color: 'var(--red)' }}>
-                    ⚠️ {desqualificados.length} funcionário(s) desqualificado(s) — comissões zeradas no relatório
+                    ⚠️ {desqualificados.length} funcionário(s) desqualificado(s) — premiações zeradas no relatório
                   </div>
                 )}
                 {funcDesqFiltrados.length === 0 ? (
@@ -1206,7 +1206,7 @@ export default function PeriodoDetailPage() {
               </select>
               {funcForm.tipo === 'ambos' && (
                 <div className="form-hint" style={{ color: 'var(--amber)' }}>
-                  ⚡ Comissão gerencial (soma frentistas + trocadores + 3% posto se meta) + comissão de trocador própria
+                  ⚡ Premiação gerencial (soma frentistas + trocadores + 3% posto se meta) + premiação de trocador própria
                 </div>
               )}
             </div>
@@ -1250,7 +1250,7 @@ export default function PeriodoDetailPage() {
                 onChange={e => setMotivoTexto(e.target.value)}
                 style={{ resize: 'vertical' }}
               />
-              <div className="form-hint">Opcional — ficará visível no relatório de comissões.</div>
+              <div className="form-hint">Opcional — ficará visível no relatório de premiações.</div>
             </div>
           </div>
           <div className="modal-foot">
@@ -1384,22 +1384,22 @@ export default function PeriodoDetailPage() {
               <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>Posto: <strong>{prodVenda.posto?.codigo} — {prodVenda.posto?.nome}</strong></div>
             </div>
             <div className="alert alert-info" style={{ fontSize: 12, marginBottom: 14 }}>
-              Valor de comissão por unidade vendida para cada tipo. Use <strong>0</strong> para não pagar comissão especial àquele tipo.
+              Valor de premiação por unidade vendida para cada tipo. Use <strong>0</strong> para não pagar premiação especial àquele tipo.
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>Comissão Frentista (R$/un)</label>
+                <label>Premiação Frentista (R$/un)</label>
                 <input type="number" min="0" step="0.01" placeholder="0,00" value={prodForm.comissao_frentista}
                   onChange={e => setProdForm({ ...prodForm, comissao_frentista: e.target.value })} />
               </div>
               <div className="form-group">
-                <label>Comissão Trocador (R$/un)</label>
+                <label>Premiação Trocador (R$/un)</label>
                 <input type="number" min="0" step="0.01" placeholder="0,00" value={prodForm.comissao_trocador}
                   onChange={e => setProdForm({ ...prodForm, comissao_trocador: e.target.value })} />
               </div>
             </div>
             <div className="form-group" style={{ maxWidth: '50%' }}>
-              <label>Comissão Gerente (R$/un)</label>
+              <label>Premiação Gerente (R$/un)</label>
               <input type="number" min="0" step="0.01" placeholder="0,00" value={prodForm.comissao_gerente}
                 onChange={e => setProdForm({ ...prodForm, comissao_gerente: e.target.value })} />
             </div>

@@ -42,7 +42,7 @@ function buildLinhas(comissoes, postos) {
 function exportXLSX(linhas, periodoNome) {
   import('xlsx').then(XLSX => {
     const cabecalho = [
-      ['Posto', 'Nome do Posto', 'Funcionário', 'Tipo', 'Comissão (R$)', 'Situação', 'Motivo Desqualificação'],
+      ['Posto', 'Nome do Posto', 'Funcionário', 'Tipo', 'Premiação (R$)', 'Situação', 'Motivo Desqualificação'],
     ];
     const dados = linhas.map(l => [
       l.posto_codigo,
@@ -80,9 +80,9 @@ function exportXLSX(linhas, periodoNome) {
     }
 
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Comissões');
+    XLSX.utils.book_append_sheet(wb, ws, 'Premiações');
 
-    const nome = `comissoes_${periodoNome.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`;
+    const nome = `premiacoes_${periodoNome.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`;
     XLSX.writeFile(wb, nome);
   });
 }
@@ -144,7 +144,7 @@ export default function RelatorioFinanceiroPage() {
       {/* ── Topbar ── */}
       <div className="topbar no-print">
         <div>
-          <div className="topbar-title">Relatório Financeiro de Comissões</div>
+          <div className="topbar-title">Relatório Financeiro de Premiações</div>
           <div className="topbar-sub">Pagamento por colaborador — exportável em XLSX e PDF</div>
         </div>
         <div className="flex items-center gap-8">
@@ -229,7 +229,7 @@ export default function RelatorioFinanceiroPage() {
               <div className="stat">
                 <div className="stat-label" style={{ color: 'var(--red)' }}>Desqualificados</div>
                 <div className="stat-value" style={{ color: 'var(--red)', fontSize: 20 }}>{qtdDesq}</div>
-                <div className="stat-note">comissão zerada</div>
+                <div className="stat-note">premiação zerada</div>
               </div>
             )}
           </div>
@@ -244,14 +244,14 @@ export default function RelatorioFinanceiroPage() {
           <Spinner />
         ) : !comissoes ? (
           <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
-            Nenhuma comissão encontrada. Verifique se as metas estão definidas e as vendas importadas.
+            Nenhuma premiação encontrada. Verifique se as metas estão definidas e as vendas importadas.
           </div>
         ) : (
           <div className="card">
             {/* Cabeçalho print-only */}
             <div className="print-only" style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 18, fontWeight: 800, color: '#1e293b' }}>
-                Relatório Financeiro de Comissões
+                Relatório Financeiro de Premiações
               </div>
               <div style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
                 <strong>Período:</strong> {periodoNome} &nbsp;|&nbsp;
@@ -271,7 +271,7 @@ export default function RelatorioFinanceiroPage() {
                     <th>Nome do Posto</th>
                     <th>Funcionário</th>
                     <th>Tipo</th>
-                    <th className="text-right">Comissão (R$)</th>
+                    <th className="text-right">Premiação (R$)</th>
                     <th>Situação</th>
                   </tr>
                 </thead>

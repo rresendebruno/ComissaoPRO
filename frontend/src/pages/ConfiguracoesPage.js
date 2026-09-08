@@ -3,7 +3,7 @@ import axios from 'axios';
 import { API } from '../contexts/AuthContext';
 
 export default function ConfiguracoesPage() {
-  const [nome, setNome] = useState('ComissõesPRO');
+  const [nome, setNome] = useState('PremiaçõesPRO');
   const [preview, setPreview] = useState(null);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -14,7 +14,7 @@ export default function ConfiguracoesPage() {
   // Carrega config do banco ao abrir
   useEffect(() => {
     axios.get(`${API}/config`).then(r => {
-      setNome(r.data.nome || 'ComissõesPRO');
+      setNome(r.data.nome || 'PremiaçõesPRO');
       setPreview(r.data.logo || null);
     }).finally(() => setLoading(false));
   }, []);
@@ -44,7 +44,7 @@ export default function ConfiguracoesPage() {
     setSaving(true);
     try {
       const r = await axios.put(`${API}/config`, {
-        nome: nome.trim() || 'ComissõesPRO',
+        nome: nome.trim() || 'PremiaçõesPRO',
         logo: preview,
       });
       // Dispara evento global para Layout e LoginPage atualizarem sem reload
@@ -90,7 +90,7 @@ export default function ConfiguracoesPage() {
               <input
                 value={nome}
                 onChange={e => setNome(e.target.value)}
-                placeholder="Ex: ComissõesPRO"
+                placeholder="Ex: PremiaçõesPRO"
                 maxLength={40}
               />
               <div className="form-hint">Aparece no menu lateral e na aba do navegador.</div>
@@ -140,7 +140,7 @@ export default function ConfiguracoesPage() {
                   {preview ? <img src={preview} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : '⛽'}
                 </div>
                 <div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>{nome || 'ComissõesPRO'}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>{nome || 'PremiaçõesPRO'}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--mono)', marginTop: 1 }}>v2.0</div>
                 </div>
               </div>

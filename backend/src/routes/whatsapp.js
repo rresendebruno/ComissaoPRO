@@ -175,7 +175,7 @@ sRightA  = S('sRightA',  fontSize=8,  textColor=C_AMBER,  fontName='Helvetica-Bo
 doc = SimpleDocTemplate(
     out, pagesize=A4,
     leftMargin=14*mm, rightMargin=14*mm, topMargin=14*mm, bottomMargin=14*mm,
-    title=f"Comissoes - {d['posto_codigo']} - {d['periodo_nome']}",
+    title=f"Premiacoes - {d['posto_codigo']} - {d['periodo_nome']}",
 )
 
 story = []
@@ -209,7 +209,7 @@ pct_posto = float(d['pct_meta_posto'] or 0)
 pct_posto_cor = C_GREEN if pct_posto >= 1 else (C_AMBER if pct_posto >= 0.75 else C_RED)
 
 kpis = [
-    ['Total Vendas Posto', 'Meta Posto Efetiva', '% Meta Posto', 'Total Comissões'],
+    ['Total Vendas Posto', 'Meta Posto Efetiva', '% Meta Posto', 'Total Premiações'],
     [
         Paragraph(brl(d['total_vendas_posto']), S('kv1', fontSize=12, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER)),
         Paragraph(brl(d['meta_posto_ef']), S('kv2', fontSize=12, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER)),
@@ -295,8 +295,8 @@ def tabela_frent_troc(lista, titulo, meta_ef, meta_orig, pro_rata):
         Paragraph('Meta Efetiva', sCenterB),
         Paragraph('% Meta', sCenterB),
         Paragraph('Taxa', sCenterB),
-        Paragraph('Com. Faixa', sCenterB),
-        Paragraph('Com. Especiais', sCenterB),
+        Paragraph('Prem. Faixa', sCenterB),
+        Paragraph('Prem. Especiais', sCenterB),
         Paragraph('Total', sCenterB),
     ]
     rows = [header]
@@ -387,10 +387,10 @@ if gerentes:
     hdr_g = [
         Paragraph('Gerente', sCenterB),
         Paragraph('Total Vendido', sCenterB),   # ← novo
-        Paragraph('Com. Prop. Frent.', sCenterB),
-        Paragraph('Com. Prop. Troc.', sCenterB),
+        Paragraph('Prem. Prop. Frent.', sCenterB),
+        Paragraph('Prem. Prop. Troc.', sCenterB),
         Paragraph('3% Posto', sCenterB),
-        Paragraph('Com. Especial', sCenterB),
+        Paragraph('Prem. Especial', sCenterB),
         Paragraph('% Meta Posto', sCenterB),
         Paragraph('Total', sCenterB),
     ]
@@ -472,7 +472,7 @@ if gerentes:
 story.append(HRFlowable(width=W, thickness=1, color=C_BORD))
 story.append(Spacer(1, 6))
 footer_data = [[
-    Paragraph('TOTAL GERAL DE COMISSOES', S('ft', fontSize=12, fontName='Helvetica-Bold', textColor=C_WHITE)),
+    Paragraph('TOTAL GERAL DE PREMIACOES', S('ft', fontSize=12, fontName='Helvetica-Bold', textColor=C_WHITE)),
     Paragraph(brl(d['total_comissoes']), S('fv', fontSize=14, fontName='Helvetica-Bold', textColor=C_GREEN, alignment=TA_RIGHT)),
 ]]
 ft = Table(footer_data, colWidths=[W*0.6, W*0.4])
@@ -621,7 +621,7 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
       continue;
     }
 
-    const pdfName = `comissoes_${posto.codigo}_${periodo.nome.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+    const pdfName = `premiacoes_${posto.codigo}_${periodo.nome.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
     const pdfPath = path.join(tmpDir, pdfName);
 
     try {
@@ -632,12 +632,12 @@ router.post('/disparar/:periodoId', auth, adminOnly, async (req, res) => {
       const totalVend  = dadosPosto.totalVendasPosto || 0;
       const emoji      = pctPosto >= 1 ? '✅' : pctPosto >= 0.75 ? '⚠️' : '❌';
       const caption    =
-        `${emoji} *Relatório de Comissões*\n` +
+        `${emoji} *Relatório de Premiações*\n` +
         `📍 ${posto.codigo} — ${posto.nome}\n` +
         `📅 ${periodo.nome}\n` +
         `🛒 Total vendido: *${fmt(totalVend)}*\n` +
         `📊 Atingimento: *${(pctPosto * 100).toFixed(1)}%* da meta\n` +
-        `💰 Total comissões: *${fmt(totalCom)}*`;
+        `💰 Total premiações: *${fmt(totalCom)}*`;
 
       await enviarParaGrupo(posto.whatsapp_group_id, pdfPath, caption);
       resultados.push({ posto: posto.codigo, nome: posto.nome, status: 'enviado', total: totalCom });
@@ -701,7 +701,7 @@ router.get('/preview/:periodoId/:postoId', auth, async (req, res) => {
   try {
     gerarPDFScript(posto, periodo.nome, dadosPosto, pdfPath);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="comissoes_${posto.codigo}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="premiacoes_${posto.codigo}.pdf"`);
     const stream = fs.createReadStream(pdfPath);
     stream.on('end', () => { try { fs.unlinkSync(pdfPath); } catch {} });
     stream.pipe(res);

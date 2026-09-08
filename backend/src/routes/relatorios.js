@@ -215,7 +215,7 @@ total_com    = sum(float(p['total_comissoes']) for p in postos)
 meta_geral   = sum(float(p['meta_posto']) for p in postos)
 
 kpi_data = [
-    ['Total Vendido', 'Meta Consolidada', 'Atingimento Médio', 'Total Comissões', 'Postos'],
+    ['Total Vendido', 'Meta Consolidada', 'Atingimento Médio', 'Total Premiações', 'Postos'],
     [
         Paragraph(brl(total_geral), S('k1', fontSize=12, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER)),
         Paragraph(brl(meta_geral),  S('k2', fontSize=12, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER)),
@@ -247,7 +247,7 @@ hdr = [
     Paragraph('Total Vendas', sCB), Paragraph('Meta Efetiva', sCB),
     Paragraph('% Meta', sCB), Paragraph('Frentistas', sCB),
     Paragraph('Trocadores', sCB), Paragraph('Gerentes', sCB),
-    Paragraph('Com. Total', sCB),
+    Paragraph('Prem. Total', sCB),
 ]
 rows = [hdr]
 for p in sorted(postos, key=lambda x: x['codigo']):
@@ -292,7 +292,7 @@ t.setStyle(ts)
 story.append(t)
 
 story.append(Spacer(1, 8))
-story.append(Paragraph(f"Gerado em {datetime.now(BRT).strftime('%d/%m/%Y %H:%M')} (Brasília) — ComissõesPRO", sMuted))
+story.append(Paragraph(f"Gerado em {datetime.now(BRT).strftime('%d/%m/%Y %H:%M')} (Brasília) — PremiaçõesPRO", sMuted))
 
 doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
 print("OK:" + out)
@@ -315,7 +315,7 @@ total_geral = sum(float(f['total_vendas']) for f in funcs)
 total_com   = sum(float(f['total_comissao']) for f in funcs)
 
 kpi_data = [
-    ['Total Vendido', 'Total Comissões', 'Funcionários', 'Qualificados', 'Desqualificados'],
+    ['Total Vendido', 'Total Premiações', 'Funcionários', 'Qualificados', 'Desqualificados'],
     [
         Paragraph(brl(total_geral),  S('k1', fontSize=11, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER)),
         Paragraph(brl(total_com),    S('k2', fontSize=11, fontName='Helvetica-Bold', textColor=C_GREEN, alignment=TA_CENTER)),
@@ -344,8 +344,8 @@ story.append(Paragraph('Detalhamento por Funcionário', sSec))
 hdr = [
     Paragraph('Posto', sCB), Paragraph('Funcionário', sCB), Paragraph('Tipo', sCB),
     Paragraph('Total Vendas', sCB), Paragraph('Meta Efetiva', sCB), Paragraph('% Meta', sCB),
-    Paragraph('Taxa', sCB), Paragraph('Com. Faixa', sCB),
-    Paragraph('Com. Especiais', sCB), Paragraph('Total Comissão', sCB), Paragraph('Status', sCB),
+    Paragraph('Taxa', sCB), Paragraph('Prem. Faixa', sCB),
+    Paragraph('Prem. Especiais', sCB), Paragraph('Total Premiação', sCB), Paragraph('Status', sCB),
 ]
 rows = [hdr]
 
@@ -404,7 +404,7 @@ t.setStyle(ts)
 story.append(t)
 
 story.append(Spacer(1, 8))
-story.append(Paragraph(f"Gerado em {datetime.now(BRT).strftime('%d/%m/%Y %H:%M')} (Brasília) — ComissõesPRO", sMuted))
+story.append(Paragraph(f"Gerado em {datetime.now(BRT).strftime('%d/%m/%Y %H:%M')} (Brasília) — PremiaçõesPRO", sMuted))
 
 doc.build(story, onFirstPage=on_page_land, onLaterPages=on_page_land)
 print("OK:" + out)
@@ -441,8 +441,8 @@ for g in grupos:
         Paragraph('Qtde', sCB),
         Paragraph('Vl. Unit.', sCB),
         Paragraph('Vl. Total', sCB),
-        Paragraph('Com./un', sCB),
-        Paragraph('Com. Especial', sCB),
+        Paragraph('Prem./un', sCB),
+        Paragraph('Prem. Especial', sCB),
     ]
     rows = [hdr]
 
@@ -502,7 +502,7 @@ for g in grupos:
 story.append(Spacer(1, 10))
 story.append(HRFlowable(width=W, thickness=1, color=C_BORD))
 story.append(Spacer(1, 6))
-story.append(Paragraph(f"Gerado em {datetime.now(BRT).strftime('%d/%m/%Y %H:%M')} (Brasília) — ComissõesPRO", sMuted))
+story.append(Paragraph(f"Gerado em {datetime.now(BRT).strftime('%d/%m/%Y %H:%M')} (Brasília) — PremiaçõesPRO", sMuted))
 
 doc.build(story, onFirstPage=on_page_land, onLaterPages=on_page_land)
 print("OK:" + out)
@@ -725,7 +725,7 @@ router.get('/postos', auth, async (req, res) => {
   const nome = `vendas_por_posto_${periodo.nome.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
   if (formato === 'csv') {
-    const headers = ['Posto','Nome','Total Vendas','Meta Efetiva','% Meta','Frentistas','Trocadores','Gerentes','Total Comissões'];
+    const headers = ['Posto','Nome','Total Vendas','Meta Efetiva','% Meta','Frentistas','Trocadores','Gerentes','Total Premiações'];
     const rows = postos.map(p => [
       p.codigo, p.nome,
       p.total_vendas.toFixed(2).replace('.',','),
@@ -740,7 +740,7 @@ router.get('/postos', auth, async (req, res) => {
   }
 
   if (formato === 'xlsx') {
-    const headers = ['Posto','Nome','Total Vendas (R$)','Meta Efetiva (R$)','% Meta','Frentistas','Trocadores','Gerentes','Total Comissões (R$)'];
+    const headers = ['Posto','Nome','Total Vendas (R$)','Meta Efetiva (R$)','% Meta','Frentistas','Trocadores','Gerentes','Total Premiações (R$)'];
     const rows = postos.map(p => [
       p.codigo, p.nome,
       p.total_vendas, p.meta_posto,
@@ -785,7 +785,7 @@ router.get('/funcionarios', auth, async (req, res) => {
   const nome = `vendas_por_funcionario_${periodo.nome.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
   if (formato === 'csv') {
-    const headers = ['Posto','Nome Posto','Funcionário','Tipo','Total Vendas','Meta Efetiva','% Meta','Taxa','Com. Faixa','Com. Especiais','Total Comissão','Status','Motivo'];
+    const headers = ['Posto','Nome Posto','Funcionário','Tipo','Total Vendas','Meta Efetiva','% Meta','Taxa','Prem. Faixa','Prem. Especiais','Total Premiação','Status','Motivo'];
     const rows = funcs.map(f => [
       f.posto_codigo, f.posto_nome, f.nome, f.tipo,
       f.total_vendas.toFixed(2).replace('.',','),
@@ -804,7 +804,7 @@ router.get('/funcionarios', auth, async (req, res) => {
   }
 
   if (formato === 'xlsx') {
-    const headers = ['Posto','Nome Posto','Funcionário','Tipo','Total Vendas (R$)','Meta Efetiva (R$)','% Meta','Taxa %','Com. Faixa (R$)','Com. Especiais (R$)','Total Comissão (R$)','Status','Motivo Desq.'];
+    const headers = ['Posto','Nome Posto','Funcionário','Tipo','Total Vendas (R$)','Meta Efetiva (R$)','% Meta','Taxa %','Prem. Faixa (R$)','Prem. Especiais (R$)','Total Premiação (R$)','Status','Motivo Desq.'];
     const rows = funcs.map(f => [
       f.posto_codigo, f.posto_nome, f.nome, f.tipo,
       f.total_vendas, f.meta_efetiva,
@@ -851,7 +851,7 @@ router.get('/detalhado', auth, async (req, res) => {
   const nome = `detalhado_por_funcionario_${periodo.nome.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
   if (formato === 'csv') {
-    const headers = ['Posto','Funcionário','Tipo','Produto','Especial','Quantidade','Vl. Unitário','Vl. Total','Com./un','Com. Especial Total'];
+    const headers = ['Posto','Funcionário','Tipo','Produto','Especial','Quantidade','Vl. Unitário','Vl. Total','Prem./un','Prem. Especial Total'];
     const rows = [];
     for (const g of grupos) {
       for (const p of g.produtos) {
@@ -873,7 +873,7 @@ router.get('/detalhado', auth, async (req, res) => {
   }
 
   if (formato === 'xlsx') {
-    const headers = ['Posto','Funcionário','Tipo','Produto','Especial','Quantidade','Vl. Unitário (R$)','Vl. Total (R$)','Com./un (R$)','Com. Especial (R$)'];
+    const headers = ['Posto','Funcionário','Tipo','Produto','Especial','Quantidade','Vl. Unitário (R$)','Vl. Total (R$)','Prem./un (R$)','Prem. Especial (R$)'];
     const rows = [];
     for (const g of grupos) {
       for (const p of g.produtos) {

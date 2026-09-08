@@ -1,6 +1,6 @@
-# ⛽ ComissõesPRO — Sistema de Comissionamento
+# ⛽ PremiaçõesPRO — Sistema de Premiações
 
-Sistema completo de gestão de comissões para postos de combustível com importação via Google Sheets.
+Sistema completo de gestão de premiações para postos de combustível com importação via Google Sheets.
 
 ---
 
@@ -44,7 +44,7 @@ O sistema estará disponível na porta 80 (ou a porta definida em `APP_PORT`).
 ### 3. Cadastrar Produtos Especiais
 - No posto → aba **Produtos Especiais**
 - Informe nome exato do produto (como na coluna C da planilha)
-- Defina valor de comissão por unidade para cada tipo
+- Defina valor de premiação por unidade para cada tipo
 
 ### 4. Criar Período de Apuração
 - Vá em **Períodos** → Novo Período
@@ -60,17 +60,17 @@ O sistema estará disponível na porta 80 (ou a porta definida em `APP_PORT`).
 - Cole a URL da planilha Google Sheets
 - Clique em Importar
 
-### 7. Ver Comissões
-- Vá em **Comissões**
+### 7. Ver Premiações
+- Vá em **Premiações**
 - Selecione o período
 - Clique em qualquer posto para expandir os detalhes
 
 ---
 
-## 📊 Regras de Comissionamento
+## 📊 Regras de Premiação
 
 ### Frentistas
-| Atingimento da Meta | Comissão |
+| Atingimento da Meta | Premiação |
 |---------------------|----------|
 | < 50% | 0% |
 | 50% – 75% | 3% do valor vendido |
@@ -79,7 +79,7 @@ O sistema estará disponível na porta 80 (ou a porta definida em `APP_PORT`).
 | ≥ 150% | 10% do valor vendido |
 
 ### Trocadores de Óleo
-| Atingimento da Meta | Comissão |
+| Atingimento da Meta | Premiação |
 |---------------------|----------|
 | < 50% | 0% |
 | 50% – 75% | 5% do valor vendido |
@@ -88,7 +88,7 @@ O sistema estará disponível na porta 80 (ou a porta definida em `APP_PORT`).
 | ≥ 150% | 15% do valor vendido |
 
 ### Gerente
-| Condição | Comissão |
+| Condição | Premiação |
 |----------|----------|
 | Meta não atingida | 0% |
 | Meta atingida (≥ 100%) | 3% do **total do posto** (frentistas + trocadores + gerente) |
@@ -126,13 +126,13 @@ comissoes-system/
 │   ├── package.json
 │   └── src/
 │       ├── server.js         # Express app + migrações
-│       ├── comissoes.js      # ⭐ Motor de cálculo de comissões
+│       ├── comissoes.js      # ⭐ Motor de cálculo de premiações
 │       ├── db/index.js       # PostgreSQL + schema SQL
 │       ├── middleware/auth.js
 │       └── routes/
 │           ├── auth.js       # Login + CRUD usuários
 │           ├── postos.js     # Postos + funcionários + produtos especiais
-│           └── periodos.js   # Períodos + metas + importação + comissões
+│           └── periodos.js   # Períodos + metas + importação + premiações
 └── frontend/
     ├── Dockerfile            # Build React + Nginx
     ├── nginx.conf            # Proxy /api → backend

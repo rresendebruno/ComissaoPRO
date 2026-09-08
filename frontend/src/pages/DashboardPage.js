@@ -111,7 +111,7 @@ export default function DashboardPage() {
                 <div className="stat-note">{chartData.length} postos</div>
               </div>
               <div className="stat">
-                <div className="stat-label">Total Comissões</div>
+                <div className="stat-label">Total Premiações</div>
                 <div className="stat-value" style={{ color: 'var(--green)' }}>{fmt(totalComissoes)}</div>
                 <div className="stat-note">frentistas + trocadores + gerentes</div>
               </div>
@@ -173,7 +173,7 @@ export default function DashboardPage() {
             <div className="card">
               <div className="card-header">
                 <div><div className="card-title">Ranking de Postos</div></div>
-                <button className="btn btn-ghost btn-sm" onClick={() => navigate('/comissoes')}>Ver comissões detalhadas →</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => navigate('/comissoes')}>Ver premiações detalhadas →</button>
               </div>
               <div className="table-wrap">
                 <table>
@@ -181,7 +181,7 @@ export default function DashboardPage() {
                     <tr>
                       <th>#</th><th>Posto</th><th className="text-right">Meta Posto</th>
                       <th className="text-right">Realizado</th><th>Atingimento</th>
-                      <th className="text-right">Total Comissões</th><th>Status</th>
+                      <th className="text-right">Total Premiações</th><th>Status</th>
                     </tr>
                   </thead>
                   <tbody>

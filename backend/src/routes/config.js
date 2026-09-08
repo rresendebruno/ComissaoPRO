@@ -22,7 +22,7 @@ async function ensureConfigTable() {
 router.get('/', async (req, res) => {
   await ensureConfigTable();
   const { rows } = await query('SELECT key, value FROM system_config WHERE key IN ($1,$2)', ['nome', 'logo']);
-  const config = { nome: 'ComissõesPRO', logo: null };
+  const config = { nome: 'PremiaçõesPRO', logo: null };
   for (const row of rows) {
     if (row.key === 'nome') config.nome = row.value;
     if (row.key === 'logo') config.logo = row.value;
@@ -38,7 +38,7 @@ router.put('/', auth, adminOnly, async (req, res) => {
     await query(`
       INSERT INTO system_config (key, value, updated_at) VALUES ('nome', $1, NOW())
       ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()
-    `, [nome || 'ComissõesPRO']);
+    `, [nome || 'PremiaçõesPRO']);
   }
 
   if (logo !== undefined) {
@@ -54,7 +54,7 @@ router.put('/', auth, adminOnly, async (req, res) => {
 
   // Retorna config atualizada
   const { rows } = await query('SELECT key, value FROM system_config WHERE key IN ($1,$2)', ['nome', 'logo']);
-  const config = { nome: 'ComissõesPRO', logo: null };
+  const config = { nome: 'PremiaçõesPRO', logo: null };
   for (const row of rows) {
     if (row.key === 'nome') config.nome = row.value;
     if (row.key === 'logo') config.logo = row.value;

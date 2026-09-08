@@ -81,7 +81,7 @@ function WhatsAppModal({ periodo, postos, onClose }) {
         </div>
 
         <div className="alert alert-info" style={{ fontSize: 12, marginBottom: 14 }}>
-          Será gerado um PDF de comissões para cada posto selecionado e enviado automaticamente
+          Será gerado um PDF de premiações para cada posto selecionado e enviado automaticamente
           ao grupo WhatsApp correspondente via Evolution API.
         </div>
 

@@ -70,7 +70,7 @@ export default function ComissoesPage() {
     <>
       <div className="topbar">
         <div>
-          <div className="topbar-title">Relatório de Comissões</div>
+          <div className="topbar-title">Relatório de Premiações</div>
           <div className="topbar-sub">
             Calculado conforme faixas de atingimento — avaliação individual por colaborador
             {dataAtualizacao && (
@@ -115,7 +115,7 @@ export default function ComissoesPage() {
         {!loading && comissoes && (
           <div className="stats mb-4" style={{ marginBottom: 16 }}>
             <div className="stat">
-              <div className="stat-label">Total Comissões</div>
+              <div className="stat-label">Total Premiações</div>
               <div className="stat-value" style={{ color: 'var(--green)' }}>{fmt(totalGeral)}</div>
               <div className="stat-note">{periodoInfo?.status === 'ativo' ? '⚡ parcial (pro rata)' : '✓ fechado'}</div>
             </div>
@@ -182,7 +182,7 @@ export default function ComissoesPage() {
                         )}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                        {funcs.length} colaboradores · Comissão total:{' '}
+                        {funcs.length} colaboradores · Premiação total:{' '}
                         <strong style={{ color: 'var(--green)' }}>{fmt(d.totalComissoes)}</strong>
                         {' · '}
                         Total posto: <strong>{fmt(d.totalVendasPosto)}</strong>
@@ -344,7 +344,7 @@ export default function ComissoesPage() {
                       alignItems: 'center',
                       gap: 12,
                     }}>
-                      <span>Gerentes — comissão cumulativa</span>
+                      <span>Gerentes — premiação cumulativa</span>
                       {multiGerente && todosGerentes[0]?.gerentesNoPostoCount > 1 && (
                         <span style={{
                           fontSize: 10,
