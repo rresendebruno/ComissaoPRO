@@ -233,6 +233,21 @@ async function migrate() {
     );
   `);
 
+  // Categorias de produtos (Previsão de Compras) — ex.: Lubrificante > Primeira Linha / Segunda Linha
+  await query(`
+    CREATE TABLE IF NOT EXISTS estoque_categorias (
+      id         SERIAL PRIMARY KEY,
+      nome       VARCHAR(255) NOT NULL,
+      pai_id     INTEGER REFERENCES estoque_categorias(id) ON DELETE CASCADE,
+      criado_em  TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS estoque_produto_categoria (
+      produto       VARCHAR(500) PRIMARY KEY,
+      categoria_id  INTEGER REFERENCES estoque_categorias(id) ON DELETE SET NULL
+    );
+  `);
+
   const { rows } = await query(`SELECT id FROM users WHERE username = 'admin'`);
   if (rows.length === 0) {
     const bcrypt = require('bcryptjs');

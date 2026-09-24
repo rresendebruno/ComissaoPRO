@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { API, useAuth } from '../contexts/AuthContext';
-import { Spinner, Empty } from '../components/ui';
+import { Modal, Spinner, Empty } from '../components/ui';
 import { fmtN } from '../utils/fmt';
 
 const fmtQ = (v) => fmtN(Math.round(Number(v) || 0));
@@ -12,6 +12,61 @@ const STATUS_INFO = {
   ok:          { label: 'OK',                   cls: 'badge-green' },
   sem_config:  { label: 'Sem estoque informado', cls: 'badge-gray' },
 };
+
+// Constrói árvore a partir de lista flat (categorias)
+function buildTree(cats) {
+  const map = {};
+  cats.forEach(c => map[c.id] = { ...c, filhos: [] });
+  const raizes = [];
+  cats.forEach(c => {
+    if (c.pai_id) map[c.pai_id]?.filhos.push(map[c.id]);
+    else raizes.push(map[c.id]);
+  });
+  return raizes;
+}
+
+// Lista plana com indentação, para usar em <select>
+function flattenCategorias(tree, prefix = '', out = []) {
+  for (const node of tree) {
+    out.push({ id: node.id, label: prefix + node.nome });
+    if (node.filhos?.length) flattenCategorias(node.filhos, prefix + node.nome + ' › ', out);
+  }
+  return out;
+}
+
+function CatNode({ node, onDelete, onAdd, nivel = 0 }) {
+  const [addNome, setAddNome] = useState('');
+  const [adicionando, setAdicionando] = useState(false);
+
+  return (
+    <div style={{ marginLeft: nivel * 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: nivel === 0 ? 700 : 500 }}>{node.nome}</span>
+        {nivel === 0 && (
+          <button className="btn btn-ghost btn-sm" title="Adicionar subcategoria"
+            onClick={() => setAdicionando(!adicionando)} style={{ fontSize: 11 }}>+ Sub</button>
+        )}
+        <button className="btn btn-danger btn-sm" onClick={() => onDelete(node.id)} style={{ fontSize: 11 }}>✕</button>
+      </div>
+
+      {adicionando && (
+        <div style={{ display: 'flex', gap: 8, marginLeft: 18, padding: '6px 0' }}>
+          <input placeholder="Nome da subcategoria…" value={addNome}
+            onChange={e => setAddNome(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && addNome.trim()) { onAdd(addNome, node.id); setAddNome(''); setAdicionando(false); } }}
+            style={{ flex: 1, fontSize: 12 }} autoFocus />
+          <button className="btn btn-primary btn-sm" onClick={() => { if (addNome.trim()) { onAdd(addNome, node.id); setAddNome(''); setAdicionando(false); } }}>
+            OK
+          </button>
+        </div>
+      )}
+
+      {node.filhos.map(f => (
+        <CatNode key={f.id} node={f} onDelete={onDelete} onAdd={onAdd} nivel={nivel + 1} />
+      ))}
+    </div>
+  );
+}
 
 function corTendencia(pct) {
   if (pct > 10) return '#22c55e';
@@ -34,11 +89,13 @@ function fmtDiasSemSaida(dias) {
 function exportXLSX(produtos, postoLabel) {
   import('xlsx').then(XLSX => {
     const cabecalho = [
-      ['Produto', 'Saída Total', 'Média/dia', 'Tendência (%)', 'Dias sem saída',
+      ['Produto', 'Categoria', 'Subcategoria', 'Saída Total', 'Média/dia', 'Tendência (%)', 'Dias sem saída',
        'Estoque Atual', 'Prazo Reposição (d)', 'Estoque Mínimo Sugerido', 'Sugestão de Compra', 'Status'],
     ];
     const dados = produtos.map(p => [
       p.produto,
+      p.categoria || '',
+      p.subcategoria || '',
       Math.round(p.qtdTotal),
       Math.round(p.mediaDiaria),
       Math.round(p.tendenciaPct),
@@ -50,7 +107,7 @@ function exportXLSX(produtos, postoLabel) {
       STATUS_INFO[p.status]?.label || p.status,
     ]);
     const ws = XLSX.utils.aoa_to_sheet([...cabecalho, ...dados]);
-    ws['!cols'] = [{ wch: 40 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 20 }];
+    ws['!cols'] = [{ wch: 40 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 20 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Previsão de Compras');
     XLSX.writeFile(wb, `previsao_compras_${postoLabel.replace(/\s+/g, '_')}.xlsx`);
@@ -68,6 +125,7 @@ export default function PrevisaoComprasPage() {
   const [cobertura, setCobertura] = useState(7);
   const [busca, setBusca]         = useState('');
   const [ordem, setOrdem]         = useState('qtd');
+  const [categoriaFiltro, setCategoriaFiltro] = useState('');
 
   const [dados, setDados]     = useState(null);
   const [loading, setLoading] = useState(false);
@@ -76,9 +134,43 @@ export default function PrevisaoComprasPage() {
   const [importando, setImportando] = useState(false);
   const [importMsg, setImportMsg]   = useState(null);
 
+  const [categorias, setCategorias] = useState([]);
+  const [catModalAberto, setCatModalAberto] = useState(false);
+  const [atribuindoCat, setAtribuindoCat] = useState(null);
+
   useEffect(() => {
     axios.get(`${API}/postos`).then(r => setPostos(r.data.filter(p => p.ativo)));
   }, []);
+
+  const carregarCategorias = useCallback(() => {
+    axios.get(`${API}/estoque/categorias`).then(r => setCategorias(r.data));
+  }, []);
+
+  useEffect(() => { carregarCategorias(); }, [carregarCategorias]);
+
+  const arvoreCategorias = useMemo(() => buildTree(categorias), [categorias]);
+  const categoriasFlat   = useMemo(() => flattenCategorias(arvoreCategorias), [arvoreCategorias]);
+
+  const adicionarCategoria = async (nome, paiId = null) => {
+    await axios.post(`${API}/estoque/categorias`, { nome: nome.trim(), pai_id: paiId });
+    carregarCategorias();
+  };
+
+  const deletarCategoria = async (id) => {
+    if (!window.confirm('Excluir esta categoria e todas as subcategorias?')) return;
+    await axios.delete(`${API}/estoque/categorias/${id}`);
+    carregarCategorias();
+  };
+
+  const atribuirCategoria = async (produto, categoriaId) => {
+    setAtribuindoCat(produto);
+    try {
+      await axios.put(`${API}/estoque/produto-categoria`, { produto, categoria_id: categoriaId || null });
+      await carregar();
+    } finally {
+      setAtribuindoCat(null);
+    }
+  };
 
   const carregar = useCallback(() => {
     setLoading(true); setErro('');
@@ -138,13 +230,19 @@ export default function PrevisaoComprasPage() {
       const b = busca.trim().toLowerCase();
       lista = lista.filter(p => p.produto.toLowerCase().includes(b));
     }
+    if (categoriaFiltro === '__sem__') {
+      lista = lista.filter(p => !p.categoriaId);
+    } else if (categoriaFiltro) {
+      const idsPermitidos = new Set([Number(categoriaFiltro), ...categorias.filter(c => c.pai_id === Number(categoriaFiltro)).map(c => c.id)]);
+      lista = lista.filter(p => p.categoriaId && idsPermitidos.has(p.categoriaId));
+    }
     const arr = [...lista];
     if (ordem === 'qtd') arr.sort((a, b) => b.qtdTotal - a.qtdTotal);
     else if (ordem === 'sugestao') arr.sort((a, b) => (b.sugestaoCompra ?? -1) - (a.sugestaoCompra ?? -1));
     else if (ordem === 'tendencia') arr.sort((a, b) => b.tendenciaPct - a.tendenciaPct);
     else if (ordem === 'sem_giro') arr.sort((a, b) => (b.diasSemSaida ?? -1) - (a.diasSemSaida ?? -1));
     return arr;
-  }, [dados, busca, ordem]);
+  }, [dados, busca, ordem, categoriaFiltro, categorias]);
 
   const postoLabel = postoId ? (postos.find(p => String(p.id) === postoId)?.codigo || 'posto') : 'todos_os_postos';
 
@@ -165,6 +263,11 @@ export default function PrevisaoComprasPage() {
           <div className="topbar-sub">Saída por período, média de venda e sugestão de compra por produto</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          {isAdmin && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setCatModalAberto(true)}>
+              🏷️ Categorias
+            </button>
+          )}
           {isAdmin && (
             <>
               <button className="btn btn-primary btn-sm" disabled={importando}
@@ -223,6 +326,16 @@ export default function PrevisaoComprasPage() {
             <div className="form-group" style={{ flex: '2 1 220px', marginBottom: 0 }}>
               <label>Buscar produto</label>
               <input type="text" placeholder="Filtrar por nome..." value={busca} onChange={e => setBusca(e.target.value)} />
+            </div>
+            <div className="form-group" style={{ flex: '1 1 180px', marginBottom: 0 }}>
+              <label>Categoria</label>
+              <select value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)}>
+                <option value="">Todas as categorias</option>
+                <option value="__sem__">Sem categoria</option>
+                {categoriasFlat.map(c => (
+                  <option key={c.id} value={c.id}>{c.label}</option>
+                ))}
+              </select>
             </div>
             <div className="form-group" style={{ flex: '1 1 180px', marginBottom: 0 }}>
               <label>Ordenar por</label>
@@ -298,6 +411,7 @@ export default function PrevisaoComprasPage() {
                         <tr>
                           <th style={{ width: 28 }}>#</th>
                           <th>Produto</th>
+                          <th>Categoria</th>
                           <th className="text-right">Saída Total</th>
                           <th className="text-right">Média/dia</th>
                           <th className="text-right">Tendência</th>
@@ -316,6 +430,29 @@ export default function PrevisaoComprasPage() {
                             <tr key={p.produto}>
                               <td style={{ color: 'var(--text-muted)', fontWeight: 700 }}>{i + 1}</td>
                               <td style={{ fontWeight: 600 }}>{p.produto}</td>
+                              <td>
+                                {isAdmin ? (
+                                  <select
+                                    className="no-print"
+                                    value={p.categoriaId || ''}
+                                    disabled={atribuindoCat === p.produto}
+                                    onChange={e => atribuirCategoria(p.produto, e.target.value ? Number(e.target.value) : null)}
+                                    style={{ fontSize: 11, maxWidth: 160 }}
+                                  >
+                                    <option value="">— Sem categoria —</option>
+                                    {categoriasFlat.map(c => (
+                                      <option key={c.id} value={c.id}>{c.label}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="no-print" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                    {p.subcategoria || p.categoria || '—'}
+                                  </span>
+                                )}
+                                <span className="print-only" style={{ fontSize: 11 }}>
+                                  {p.subcategoria || p.categoria || '—'}
+                                </span>
+                              </td>
                               <td className="text-right mono">{fmtQ(p.qtdTotal)}</td>
                               <td className="text-right mono">{fmtQ(p.mediaDiaria)}</td>
                               <td className="text-right mono" style={{ fontWeight: 700, color: corTendencia(p.tendenciaPct) }}>
@@ -377,6 +514,44 @@ export default function PrevisaoComprasPage() {
           </>
         )}
       </div>
+
+      {catModalAberto && (
+        <Modal title="Gerenciar Categorias" onClose={() => setCatModalAberto(false)} size={480}>
+          <div className="modal-body">
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+              Ex.: crie a categoria <strong>Lubrificante</strong> e as subcategorias <strong>Primeira Linha</strong> e <strong>Segunda Linha</strong>.
+              Depois atribua cada produto na coluna "Categoria" da tabela.
+            </div>
+
+            {arvoreCategorias.length === 0 && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Nenhuma categoria cadastrada ainda.</div>
+            )}
+            {arvoreCategorias.map(node => (
+              <CatNode key={node.id} node={node} onDelete={deletarCategoria} onAdd={adicionarCategoria} />
+            ))}
+
+            <NovaCategoriaRaiz onAdd={adicionarCategoria} />
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-primary" onClick={() => setCatModalAberto(false)}>Fechar</button>
+          </div>
+        </Modal>
+      )}
     </>
+  );
+}
+
+function NovaCategoriaRaiz({ onAdd }) {
+  const [nome, setNome] = useState('');
+  return (
+    <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+      <input placeholder="Nova categoria (ex: Lubrificante)…" value={nome}
+        onChange={e => setNome(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && nome.trim()) { onAdd(nome); setNome(''); } }}
+        style={{ flex: 1, fontSize: 13 }} />
+      <button className="btn btn-primary btn-sm" onClick={() => { if (nome.trim()) { onAdd(nome); setNome(''); } }}>
+        + Categoria
+      </button>
+    </div>
   );
 }

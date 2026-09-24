@@ -105,6 +105,23 @@ router.get('/previsao', auth, async (req, res) => {
     for (const r of estoqueRows) estoqueMap[r.produto] = r;
   }
 
+  // Categorias atribuídas aos produtos (ex.: Lubrificante > Primeira Linha)
+  const { rows: catRows } = await query(`
+    WITH RECURSIVE raiz AS (
+      SELECT id, nome FROM estoque_categorias WHERE pai_id IS NULL
+      UNION ALL
+      SELECT c.id, r.nome FROM estoque_categorias c JOIN raiz r ON c.pai_id = r.id
+    )
+    SELECT epc.produto, ec.id AS categoria_id,
+           COALESCE(r.nome, 'Sem Categoria') AS categoria,
+           ec.nome AS subcategoria
+    FROM estoque_produto_categoria epc
+    LEFT JOIN estoque_categorias ec ON ec.id = epc.categoria_id
+    LEFT JOIN raiz r ON r.id = ec.id
+  `);
+  const categoriaMap = {};
+  for (const r of catRows) categoriaMap[r.produto] = r;
+
   // Agrega por produto
   const porProduto = {};
   for (const v of vendas) {
@@ -147,8 +164,13 @@ router.get('/previsao', auth, async (req, res) => {
       else status = 'ok';
     }
 
+    const cat = categoriaMap[p.produto] || null;
+
     return {
       produto: p.produto,
+      categoriaId: cat?.categoria_id ?? null,
+      categoria: cat?.categoria || null,
+      subcategoria: cat?.subcategoria || null,
       qtdTotal: p.total,
       mediaDiaria,
       tendenciaPct,
@@ -183,6 +205,43 @@ router.put('/produto', auth, adminOnly, async (req, res) => {
      DO UPDATE SET estoque_atual = $3, prazo_reposicao_dias = $4, updated_at = NOW()
      RETURNING *`,
     [posto_id, produto.trim(), N(estoque_atual), Math.max(0, Number(prazo_reposicao_dias) || 3)]
+  );
+  res.json(rows[0]);
+});
+
+// ── Categorias de produtos ──────────────────────────────────────────────────────
+
+router.get('/categorias', auth, async (req, res) => {
+  const { rows } = await query('SELECT * FROM estoque_categorias ORDER BY pai_id NULLS FIRST, nome');
+  res.json(rows);
+});
+
+router.post('/categorias', auth, adminOnly, async (req, res) => {
+  const { nome, pai_id } = req.body;
+  if (!nome?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+  const { rows } = await query(
+    'INSERT INTO estoque_categorias (nome, pai_id) VALUES ($1, $2) RETURNING *',
+    [nome.trim(), pai_id || null]
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.delete('/categorias/:id', auth, adminOnly, async (req, res) => {
+  await query('DELETE FROM estoque_categorias WHERE id=$1', [req.params.id]);
+  res.json({ success: true });
+});
+
+// ── Atribui categoria a um produto ──────────────────────────────────────────────
+
+router.put('/produto-categoria', auth, adminOnly, async (req, res) => {
+  const { produto, categoria_id } = req.body;
+  if (!produto?.trim()) return res.status(400).json({ error: 'produto é obrigatório' });
+  const { rows } = await query(
+    `INSERT INTO estoque_produto_categoria (produto, categoria_id)
+     VALUES ($1, $2)
+     ON CONFLICT (produto) DO UPDATE SET categoria_id = $2
+     RETURNING *`,
+    [produto.trim(), categoria_id || null]
   );
   res.json(rows[0]);
 });
