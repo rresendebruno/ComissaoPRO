@@ -190,13 +190,9 @@ router.put('/produto', auth, adminOnly, async (req, res) => {
 // ── Importa estoque atual em massa (CSV/XLSX) ──────────────────────────────────
 // Colunas esperadas: B = chave da empresa, U = produto, AA = quantidade em estoque
 
-router.post('/importar', auth, adminOnly, upload.single('arquivo'), async (req, res) => {
-  const arquivo = req.file;
-  if (!arquivo) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
-
-  const linhas = linhasDoArquivo(arquivo);
-  if (linhas === null) return res.status(400).json({ error: 'Formato de arquivo não suportado. Use CSV ou XLSX.' });
-  if (!linhas.length) return res.status(400).json({ error: 'Arquivo vazio' });
+router.post('/importar', auth, adminOnly, upload.array('arquivo', 50), async (req, res) => {
+  const arquivos = req.files || [];
+  if (!arquivos.length) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
   const { rows: postosDB } = await query('SELECT id, codigo, chave_empresa FROM postos WHERE ativo=true');
   const postoIdx = {};
@@ -204,37 +200,42 @@ router.post('/importar', auth, adminOnly, upload.single('arquivo'), async (req, 
     if (p.chave_empresa) postoIdx[p.chave_empresa.trim().toLowerCase()] = p;
   }
 
-  const diagnostico = { semChave: 0, semProduto: 0, semPosto: new Set(), ok: 0, amostra: null };
-  // Map "postoId|produto" -> quantidade acumulada
+  const diagnostico = { semChave: 0, semProduto: 0, semPosto: new Set(), ok: 0, arquivosInvalidos: 0, amostra: null };
+  // Map "postoId|produto" -> quantidade acumulada (somada entre todos os arquivos)
   const itensMap = new Map();
 
-  for (let i = 1; i < linhas.length; i++) { // linha 0 = cabeçalho
-    const cols = linhas[i];
-    if (!cols || !cols.length) continue;
+  for (const arquivo of arquivos) {
+    const linhas = linhasDoArquivo(arquivo);
+    if (linhas === null || !linhas.length) { diagnostico.arquivosInvalidos++; continue; }
 
-    const chave      = String(cols[1]  ?? '').trim().toLowerCase(); // col B
-    const produto     = String(cols[20] ?? '').trim();               // col U
-    const quantidade  = toNum(cols[26]);                             // col AA
+    for (let i = 1; i < linhas.length; i++) { // linha 0 = cabeçalho
+      const cols = linhas[i];
+      if (!cols || !cols.length) continue;
 
-    if (i === 1) diagnostico.amostra = { totalCols: cols.length, colB: cols[1], colU: cols[20], colAA: cols[26] };
+      const chave      = String(cols[1]  ?? '').trim().toLowerCase(); // col B
+      const produto     = String(cols[20] ?? '').trim();               // col U
+      const quantidade  = toNum(cols[26]);                             // col AA
 
-    if (!chave)   { diagnostico.semChave++;   continue; }
-    if (!produto) { diagnostico.semProduto++; continue; }
+      if (i === 1 && !diagnostico.amostra) diagnostico.amostra = { totalCols: cols.length, colB: cols[1], colU: cols[20], colAA: cols[26] };
 
-    const posto = postoIdx[chave];
-    if (!posto) { diagnostico.semPosto.add(chave); continue; }
+      if (!chave)   { diagnostico.semChave++;   continue; }
+      if (!produto) { diagnostico.semProduto++; continue; }
 
-    const key = `${posto.id}|${produto}`;
-    itensMap.set(key, {
-      postoId: posto.id,
-      produto,
-      quantidade: (itensMap.get(key)?.quantidade || 0) + quantidade,
-    });
-    diagnostico.ok++;
+      const posto = postoIdx[chave];
+      if (!posto) { diagnostico.semPosto.add(chave); continue; }
+
+      const key = `${posto.id}|${produto}`;
+      itensMap.set(key, {
+        postoId: posto.id,
+        produto,
+        quantidade: (itensMap.get(key)?.quantidade || 0) + quantidade,
+      });
+      diagnostico.ok++;
+    }
   }
 
-  console.log('[Estoque Import]', arquivo.originalname, {
-    totalLinhas: linhas.length - 1,
+  console.log('[Estoque Import]', arquivos.map(a => a.originalname), {
+    arquivos: arquivos.length,
     amostra: diagnostico.amostra,
     semChave: diagnostico.semChave,
     semProduto: diagnostico.semProduto,
@@ -290,8 +291,8 @@ router.post('/importar', auth, adminOnly, upload.single('arquivo'), async (req, 
     postosAtualizados: porPosto.size,
     produtosAtualizados,
     zerados,
-    erros: diagnostico.semChave + diagnostico.semProduto + diagnostico.semPosto.size,
-    message: `Estoque atualizado: ${produtosAtualizados} produtos em ${porPosto.size} posto(s). ${zerados > 0 ? `${zerados} produtos zerados (não vieram no arquivo).` : ''}`,
+    erros: diagnostico.semChave + diagnostico.semProduto + diagnostico.semPosto.size + diagnostico.arquivosInvalidos,
+    message: `Estoque atualizado: ${produtosAtualizados} produtos em ${porPosto.size} posto(s), a partir de ${arquivos.length} arquivo(s). ${zerados > 0 ? `${zerados} produtos zerados (não vieram nos arquivos).` : ''}`,
   });
 });
 

@@ -2,7 +2,9 @@ import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import axios from 'axios';
 import { API, useAuth } from '../contexts/AuthContext';
 import { Spinner, Empty } from '../components/ui';
-import { fmtQ, fmtN } from '../utils/fmt';
+import { fmtN } from '../utils/fmt';
+
+const fmtQ = (v) => fmtN(Math.round(Number(v) || 0));
 
 const STATUS_INFO = {
   critico:     { label: 'Crítico — comprar já', cls: 'badge-red' },
@@ -37,14 +39,14 @@ function exportXLSX(produtos, postoLabel) {
     ];
     const dados = produtos.map(p => [
       p.produto,
-      p.qtdTotal,
-      Number(p.mediaDiaria.toFixed(2)),
-      Number(p.tendenciaPct.toFixed(1)),
+      Math.round(p.qtdTotal),
+      Math.round(p.mediaDiaria),
+      Math.round(p.tendenciaPct),
       p.diasSemSaida ?? '',
-      p.estoqueAtual ?? '',
+      p.estoqueAtual != null ? Math.round(p.estoqueAtual) : '',
       p.prazoReposicaoDias,
-      Number(p.estoqueMinimoSugerido.toFixed(2)),
-      p.sugestaoCompra != null ? Number(p.sugestaoCompra.toFixed(2)) : '',
+      Math.round(p.estoqueMinimoSugerido),
+      p.sugestaoCompra != null ? Math.round(p.sugestaoCompra) : '',
       STATUS_INFO[p.status]?.label || p.status,
     ]);
     const ws = XLSX.utils.aoa_to_sheet([...cabecalho, ...dados]);
@@ -91,12 +93,12 @@ export default function PrevisaoComprasPage() {
   useEffect(() => { carregar(); }, [carregar]);
 
   const handleImportEstoque = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
     e.target.value = '';
     setImportando(true); setImportMsg(null);
     const fd = new FormData();
-    fd.append('arquivo', file);
+    files.forEach(f => fd.append('arquivo', f));
     try {
       const r = await axios.post(`${API}/estoque/importar`, fd);
       setImportMsg({ ok: true, text: r.data.message });
@@ -170,7 +172,7 @@ export default function PrevisaoComprasPage() {
                 onClick={() => fileRef.current?.click()}>
                 {importando ? 'Importando…' : '📂 Importar Estoque'}
               </button>
-              <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls"
+              <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" multiple
                 style={{ display: 'none' }} onChange={handleImportEstoque} />
             </>
           )}
