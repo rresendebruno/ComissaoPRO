@@ -241,6 +241,7 @@ export default function PrevisaoComprasPage() {
     else if (ordem === 'sugestao') arr.sort((a, b) => (b.sugestaoCompra ?? -1) - (a.sugestaoCompra ?? -1));
     else if (ordem === 'tendencia') arr.sort((a, b) => b.tendenciaPct - a.tendenciaPct);
     else if (ordem === 'sem_giro') arr.sort((a, b) => (b.diasSemSaida ?? -1) - (a.diasSemSaida ?? -1));
+    else if (ordem === 'sem_categoria') arr.sort((a, b) => (a.categoriaId ? 1 : 0) - (b.categoriaId ? 1 : 0) || b.qtdTotal - a.qtdTotal);
     return arr;
   }, [dados, busca, ordem, categoriaFiltro, categorias]);
 
@@ -252,7 +253,8 @@ export default function PrevisaoComprasPage() {
     const precisamComprar = dados.produtos.filter(p => p.status === 'comprar' || p.status === 'critico').length;
     const criticos = dados.produtos.filter(p => p.status === 'critico').length;
     const semGiro = dados.produtos.filter(p => p.diasSemSaida != null && p.diasSemSaida > cobertura * 3).length;
-    return { total, precisamComprar, criticos, semGiro };
+    const categorizados = dados.produtos.filter(p => p.categoriaId).length;
+    return { total, precisamComprar, criticos, semGiro, categorizados, semCategoria: total - categorizados };
   }, [dados, cobertura]);
 
   return (
@@ -344,6 +346,7 @@ export default function PrevisaoComprasPage() {
                 {postoId && <option value="sugestao">Sugestão de compra</option>}
                 <option value="tendencia">Tendência (alta → queda)</option>
                 <option value="sem_giro">Mais dias sem saída</option>
+                {isAdmin && <option value="sem_categoria">Sem categoria primeiro</option>}
               </select>
             </div>
           </div>
@@ -389,6 +392,22 @@ export default function PrevisaoComprasPage() {
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 4 }}>Sem Giro (possível sobra)</div>
                       <div style={{ fontSize: 22, fontWeight: 800, color: '#94a3b8' }}>{fmtN(kpis.semGiro)}</div>
                     </div>
+                    {isAdmin && (
+                      <div className="card no-print" style={{ padding: '16px 18px', cursor: kpis.semCategoria > 0 ? 'pointer' : 'default' }}
+                        title="Clique para ver só os produtos sem categoria"
+                        onClick={() => kpis.semCategoria > 0 && setCategoriaFiltro('__sem__')}>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 4 }}>Categorizados</div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: kpis.semCategoria === 0 ? '#22c55e' : '#f59e0b' }}>
+                          {fmtN(kpis.categorizados)}/{fmtN(kpis.total)}
+                        </div>
+                        <div className="prog-track" style={{ marginTop: 6 }}>
+                          <div className="prog-fill" style={{
+                            width: `${kpis.total > 0 ? (kpis.categorizados / kpis.total) * 100 : 0}%`,
+                            background: kpis.semCategoria === 0 ? 'var(--green)' : 'var(--amber)',
+                          }} />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -426,24 +445,36 @@ export default function PrevisaoComprasPage() {
                       <tbody>
                         {produtosFiltrados.map((p, i) => {
                           const st = STATUS_INFO[p.status];
+                          const semCat = categorias.length > 0 && !p.categoriaId;
                           return (
-                            <tr key={p.produto}>
+                            <tr key={p.produto} style={semCat ? { background: 'rgba(245,158,11,0.06)' } : undefined}>
                               <td style={{ color: 'var(--text-muted)', fontWeight: 700 }}>{i + 1}</td>
                               <td style={{ fontWeight: 600 }}>{p.produto}</td>
                               <td>
                                 {isAdmin ? (
-                                  <select
-                                    className="no-print"
-                                    value={p.categoriaId || ''}
-                                    disabled={atribuindoCat === p.produto}
-                                    onChange={e => atribuirCategoria(p.produto, e.target.value ? Number(e.target.value) : null)}
-                                    style={{ fontSize: 11, maxWidth: 160 }}
-                                  >
-                                    <option value="">— Sem categoria —</option>
-                                    {categoriasFlat.map(c => (
-                                      <option key={c.id} value={c.id}>{c.label}</option>
-                                    ))}
-                                  </select>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} className="no-print">
+                                    <span title={p.categoriaId ? 'Categorizado' : 'Sem categoria'}
+                                      style={{
+                                        width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                                        background: p.categoriaId ? '#22c55e' : '#f59e0b',
+                                      }} />
+                                    <select
+                                      value={p.categoriaId || ''}
+                                      disabled={atribuindoCat === p.produto}
+                                      onChange={e => atribuirCategoria(p.produto, e.target.value ? Number(e.target.value) : null)}
+                                      style={{
+                                        fontSize: 11, maxWidth: 160,
+                                        borderColor: p.categoriaId ? 'rgba(34,197,94,0.4)' : 'rgba(245,158,11,0.5)',
+                                        color: p.categoriaId ? 'var(--text)' : '#f59e0b',
+                                        fontWeight: p.categoriaId ? 400 : 600,
+                                      }}
+                                    >
+                                      <option value="">— Sem categoria —</option>
+                                      {categoriasFlat.map(c => (
+                                        <option key={c.id} value={c.id}>{c.label}</option>
+                                      ))}
+                                    </select>
+                                  </div>
                                 ) : (
                                   <span className="no-print" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                                     {p.subcategoria || p.categoria || '—'}
