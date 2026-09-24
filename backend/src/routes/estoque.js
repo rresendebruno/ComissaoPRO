@@ -20,6 +20,13 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 const N = v => (v == null ? 0 : Number(v) || 0);
 const MS_DIA = 24 * 60 * 60 * 1000;
 
+// Remove acentos e normaliza para comparação de texto (ex.: "Óleo" -> "oleo")
+function normalizar(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/\p{Mn}/gu, '')
+    .toLowerCase().trim();
+}
+
 function diasEntre(a, b) {
   return Math.max(1, Math.round((new Date(b) - new Date(a)) / MS_DIA) + 1);
 }
@@ -255,6 +262,133 @@ router.put('/produto-categoria', auth, adminOnly, async (req, res) => {
     [produto.trim(), categoria_id || null]
   );
   res.json(rows[0]);
+});
+
+// ── Regras de categorização automática ─────────────────────────────────────────
+// Cada regra tem uma lista de palavras (todas precisam aparecer no nome do produto,
+// sem acento/maiúscula) que, se bater, atribuem a categoria configurada.
+
+router.get('/regras', auth, async (req, res) => {
+  const { rows } = await query(`
+    SELECT r.id, r.palavras, r.categoria_id, r.criado_em,
+           ec.nome AS categoria_nome, pai.nome AS categoria_pai_nome
+    FROM estoque_regras_categoria r
+    JOIN estoque_categorias ec ON ec.id = r.categoria_id
+    LEFT JOIN estoque_categorias pai ON pai.id = ec.pai_id
+    ORDER BY r.criado_em
+  `);
+  res.json(rows);
+});
+
+router.post('/regras', auth, adminOnly, async (req, res) => {
+  const { palavras, categoria_id } = req.body;
+  if (!palavras?.trim()) return res.status(400).json({ error: 'Informe ao menos uma palavra-chave' });
+  if (!categoria_id) return res.status(400).json({ error: 'categoria_id é obrigatório' });
+  const { rows } = await query(
+    'INSERT INTO estoque_regras_categoria (palavras, categoria_id) VALUES ($1, $2) RETURNING *',
+    [palavras.trim(), categoria_id]
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.delete('/regras/:id', auth, adminOnly, async (req, res) => {
+  await query('DELETE FROM estoque_regras_categoria WHERE id=$1', [req.params.id]);
+  res.json({ success: true });
+});
+
+// ── Cria de uma vez as categorias/regras sugeridas para lubrificantes ──────────
+// Lubrificante > Primeira Linha (Lubrax/Petronas/Gulf/Shell/Mobil) ou Segunda
+// Linha (qualquer outra marca); Filtro; Aditivo Combustível.
+
+router.post('/regras/sugestoes', auth, adminOnly, async (req, res) => {
+  async function garantirCategoria(nome, paiId = null) {
+    const { rows } = await query(
+      `SELECT id FROM estoque_categorias WHERE LOWER(nome)=LOWER($1) AND COALESCE(pai_id,0)=COALESCE($2,0)`,
+      [nome, paiId]
+    );
+    if (rows.length) return rows[0].id;
+    const ins = await query(
+      'INSERT INTO estoque_categorias (nome, pai_id) VALUES ($1,$2) RETURNING id',
+      [nome, paiId]
+    );
+    return ins.rows[0].id;
+  }
+
+  async function garantirRegra(palavras, categoriaId) {
+    const { rows } = await query(
+      `SELECT id FROM estoque_regras_categoria WHERE LOWER(palavras)=LOWER($1) AND categoria_id=$2`,
+      [palavras, categoriaId]
+    );
+    if (rows.length) return false;
+    await query('INSERT INTO estoque_regras_categoria (palavras, categoria_id) VALUES ($1,$2)', [palavras, categoriaId]);
+    return true;
+  }
+
+  const lubrificanteId  = await garantirCategoria('Lubrificante');
+  const primeiraLinhaId = await garantirCategoria('Primeira Linha', lubrificanteId);
+  const segundaLinhaId  = await garantirCategoria('Segunda Linha', lubrificanteId);
+  const filtroId        = await garantirCategoria('Filtro');
+  const aditivoCombId   = await garantirCategoria('Aditivo Combustível');
+
+  let criadas = 0;
+  const marcas = ['lubrax', 'petronas', 'gulf', 'shell', 'mobil'];
+  for (const marca of marcas) {
+    if (await garantirRegra(`oleo,${marca}`, primeiraLinhaId)) criadas++;
+  }
+  if (await garantirRegra('oleo', segundaLinhaId)) criadas++;
+  if (await garantirRegra('filtro', filtroId)) criadas++;
+  if (await garantirRegra('aditivo,combustivel', aditivoCombId)) criadas++;
+
+  res.json({ success: true, regrasCriadas: criadas, message: `${criadas} regra(s) nova(s) criada(s).` });
+});
+
+// ── Executa as regras contra o catálogo de produtos ────────────────────────────
+
+router.post('/auto-categorizar', auth, adminOnly, async (req, res) => {
+  const sobrescrever = !!req.body?.sobrescrever;
+
+  const { rows: regrasDB } = await query('SELECT id, palavras, categoria_id FROM estoque_regras_categoria');
+  if (!regrasDB.length) return res.json({ avaliados: 0, categorizados: 0, semCorrespondencia: 0, message: 'Nenhuma regra cadastrada.' });
+
+  // Regras com mais palavras-chave são mais específicas e devem ser testadas primeiro
+  const regras = regrasDB
+    .map(r => ({ ...r, termos: r.palavras.split(',').map(normalizar).filter(Boolean) }))
+    .sort((a, b) => b.termos.length - a.termos.length);
+
+  const { rows: produtosDB } = await query('SELECT DISTINCT produto FROM vendas');
+  const { rows: existentesDB } = await query('SELECT produto, categoria_id FROM estoque_produto_categoria');
+  const jaCategorizado = new Set(existentesDB.filter(e => e.categoria_id).map(e => e.produto));
+
+  let categorizados = 0;
+  const writes = [];
+  for (const { produto } of produtosDB) {
+    if (!sobrescrever && jaCategorizado.has(produto)) continue;
+    const nomeNorm = normalizar(produto);
+    const regra = regras.find(r => r.termos.every(t => nomeNorm.includes(t)));
+    if (regra) {
+      writes.push([produto, regra.categoria_id]);
+      categorizados++;
+    }
+  }
+
+  const BATCH = 200;
+  for (let i = 0; i < writes.length; i += BATCH) {
+    const batch = writes.slice(i, i + BATCH);
+    const vals = batch.map((_, j) => `($${j*2+1},$${j*2+2})`).join(',');
+    await query(
+      `INSERT INTO estoque_produto_categoria (produto, categoria_id)
+       VALUES ${vals}
+       ON CONFLICT (produto) DO UPDATE SET categoria_id = EXCLUDED.categoria_id`,
+      batch.flat()
+    );
+  }
+
+  res.json({
+    avaliados: produtosDB.length,
+    categorizados,
+    semCorrespondencia: produtosDB.length - categorizados - (sobrescrever ? 0 : jaCategorizado.size),
+    message: `${categorizados} produto(s) categorizado(s) automaticamente.`,
+  });
 });
 
 // ── Importa estoque atual em massa (CSV/XLSX) ──────────────────────────────────

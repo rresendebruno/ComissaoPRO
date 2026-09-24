@@ -246,6 +246,13 @@ async function migrate() {
       produto       VARCHAR(500) PRIMARY KEY,
       categoria_id  INTEGER REFERENCES estoque_categorias(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS estoque_regras_categoria (
+      id            SERIAL PRIMARY KEY,
+      palavras      VARCHAR(500) NOT NULL,
+      categoria_id  INTEGER NOT NULL REFERENCES estoque_categorias(id) ON DELETE CASCADE,
+      criado_em     TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 
   const { rows } = await query(`SELECT id FROM users WHERE username = 'admin'`);

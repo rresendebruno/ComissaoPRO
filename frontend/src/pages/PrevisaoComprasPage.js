@@ -139,6 +139,12 @@ export default function PrevisaoComprasPage() {
   const [catErro, setCatErro] = useState('');
   const [atribuindoCat, setAtribuindoCat] = useState(null);
 
+  const [regras, setRegras] = useState([]);
+  const [novaRegraPalavras, setNovaRegraPalavras] = useState('');
+  const [novaRegraCategoria, setNovaRegraCategoria] = useState('');
+  const [autoCatRodando, setAutoCatRodando] = useState(false);
+  const [autoCatMsg, setAutoCatMsg] = useState(null);
+
   useEffect(() => {
     axios.get(`${API}/postos`).then(r => setPostos(r.data.filter(p => p.ativo)));
   }, []);
@@ -166,6 +172,49 @@ export default function PrevisaoComprasPage() {
     if (!window.confirm('Excluir esta categoria e todas as subcategorias?')) return;
     await axios.delete(`${API}/estoque/categorias/${id}`);
     carregarCategorias();
+  };
+
+  const carregarRegras = useCallback(() => {
+    axios.get(`${API}/estoque/regras`).then(r => setRegras(r.data));
+  }, []);
+
+  useEffect(() => { carregarRegras(); }, [carregarRegras]);
+
+  const adicionarRegra = async () => {
+    if (!novaRegraPalavras.trim() || !novaRegraCategoria) return;
+    setCatErro('');
+    try {
+      await axios.post(`${API}/estoque/regras`, { palavras: novaRegraPalavras.trim(), categoria_id: Number(novaRegraCategoria) });
+      setNovaRegraPalavras(''); setNovaRegraCategoria('');
+      carregarRegras();
+    } catch (ex) {
+      setCatErro(ex.response?.data?.error || 'Erro ao criar regra');
+    }
+  };
+
+  const deletarRegra = async (id) => {
+    await axios.delete(`${API}/estoque/regras/${id}`);
+    carregarRegras();
+  };
+
+  const aplicarSugestoes = async () => {
+    const r = await axios.post(`${API}/estoque/regras/sugestoes`);
+    carregarCategorias();
+    carregarRegras();
+    setAutoCatMsg({ ok: true, text: r.data.message });
+  };
+
+  const rodarAutoCategorizar = async (sobrescrever = false) => {
+    setAutoCatRodando(true); setAutoCatMsg(null);
+    try {
+      const r = await axios.post(`${API}/estoque/auto-categorizar`, { sobrescrever });
+      setAutoCatMsg({ ok: true, text: `${r.data.categorizados} produto(s) categorizado(s). ${r.data.semCorrespondencia} sem regra correspondente.` });
+      carregar();
+    } catch (ex) {
+      setAutoCatMsg({ ok: false, text: ex.response?.data?.error || 'Erro ao categorizar automaticamente' });
+    } finally {
+      setAutoCatRodando(false);
+    }
   };
 
   const atribuirCategoria = async (produto, categoriaId) => {
@@ -553,11 +602,11 @@ export default function PrevisaoComprasPage() {
       </div>
 
       {catModalAberto && (
-        <Modal title="Gerenciar Categorias" onClose={() => { setCatModalAberto(false); setCatErro(''); }} size={480}>
+        <Modal title="Gerenciar Categorias" onClose={() => { setCatModalAberto(false); setCatErro(''); setAutoCatMsg(null); }} size={560}>
           <div className="modal-body">
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
               Ex.: crie a categoria <strong>Lubrificante</strong> e as subcategorias <strong>Primeira Linha</strong> e <strong>Segunda Linha</strong>.
-              Depois atribua cada produto na coluna "Categoria" da tabela.
+              Depois atribua cada produto na coluna "Categoria" da tabela — ou use as regras automáticas abaixo.
             </div>
 
             {catErro && <div className="alert alert-error">{catErro}</div>}
@@ -570,9 +619,66 @@ export default function PrevisaoComprasPage() {
             ))}
 
             <NovaCategoriaRaiz onAdd={adicionarCategoria} />
+
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Regras Automáticas</div>
+                <button className="btn btn-ghost btn-sm" onClick={aplicarSugestoes}>
+                  ✨ Usar sugestões (Lubrificante/Filtro/Aditivo)
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
+                Uma regra atribui a categoria automaticamente quando <strong>todas</strong> as palavras aparecem no nome do produto
+                (sem diferenciar acento/maiúscula). Ex.: "oleo, lubrax" → Primeira Linha.
+              </div>
+
+              {regras.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  {regras.map(r => (
+                    <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ flex: 1, fontSize: 12 }}>
+                        <code style={{ fontSize: 11 }}>{r.palavras.split(',').join(' + ')}</code>
+                        {' → '}
+                        {r.categoria_pai_nome ? `${r.categoria_pai_nome} › ${r.categoria_nome}` : r.categoria_nome}
+                      </span>
+                      <button className="btn btn-danger btn-sm" onClick={() => deletarRegra(r.id)} style={{ fontSize: 11 }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <input placeholder="palavras-chave (separadas por vírgula)…" value={novaRegraPalavras}
+                  onChange={e => setNovaRegraPalavras(e.target.value)}
+                  style={{ flex: '2 1 160px', fontSize: 12 }} />
+                <select value={novaRegraCategoria} onChange={e => setNovaRegraCategoria(e.target.value)} style={{ flex: '1 1 140px', fontSize: 12 }}>
+                  <option value="">Categoria…</option>
+                  {categoriasFlat.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+                <button className="btn btn-primary btn-sm" onClick={adicionarRegra}>+ Regra</button>
+              </div>
+
+              {autoCatMsg && (
+                <div className={`alert ${autoCatMsg.ok ? 'alert-success' : 'alert-error'}`} style={{ marginBottom: 10 }}>
+                  {autoCatMsg.text}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-primary btn-sm" disabled={autoCatRodando || !regras.length}
+                  onClick={() => rodarAutoCategorizar(false)}>
+                  {autoCatRodando ? 'Categorizando…' : '🤖 Categorizar Automaticamente (só os sem categoria)'}
+                </button>
+                <button className="btn btn-ghost btn-sm" disabled={autoCatRodando || !regras.length}
+                  title="Reaplica as regras mesmo nos produtos que já têm categoria"
+                  onClick={() => rodarAutoCategorizar(true)}>
+                  Reaplicar em todos
+                </button>
+              </div>
+            </div>
           </div>
           <div className="modal-foot">
-            <button className="btn btn-primary" onClick={() => { setCatModalAberto(false); setCatErro(''); }}>Fechar</button>
+            <button className="btn btn-primary" onClick={() => { setCatModalAberto(false); setCatErro(''); setAutoCatMsg(null); }}>Fechar</button>
           </div>
         </Modal>
       )}
