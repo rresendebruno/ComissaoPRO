@@ -219,9 +219,20 @@ router.get('/categorias', auth, async (req, res) => {
 router.post('/categorias', auth, adminOnly, async (req, res) => {
   const { nome, pai_id } = req.body;
   if (!nome?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+
+  const paiId = pai_id || null;
+  const { rows: existentes } = await query(
+    `SELECT id FROM estoque_categorias
+     WHERE LOWER(nome) = LOWER($1) AND COALESCE(pai_id, 0) = COALESCE($2, 0)`,
+    [nome.trim(), paiId]
+  );
+  if (existentes.length) {
+    return res.status(409).json({ error: `Já existe uma categoria "${nome.trim()}" ${paiId ? 'nesse nível' : 'raiz'}.` });
+  }
+
   const { rows } = await query(
     'INSERT INTO estoque_categorias (nome, pai_id) VALUES ($1, $2) RETURNING *',
-    [nome.trim(), pai_id || null]
+    [nome.trim(), paiId]
   );
   res.status(201).json(rows[0]);
 });

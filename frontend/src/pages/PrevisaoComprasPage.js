@@ -136,6 +136,7 @@ export default function PrevisaoComprasPage() {
 
   const [categorias, setCategorias] = useState([]);
   const [catModalAberto, setCatModalAberto] = useState(false);
+  const [catErro, setCatErro] = useState('');
   const [atribuindoCat, setAtribuindoCat] = useState(null);
 
   useEffect(() => {
@@ -152,8 +153,13 @@ export default function PrevisaoComprasPage() {
   const categoriasFlat   = useMemo(() => flattenCategorias(arvoreCategorias), [arvoreCategorias]);
 
   const adicionarCategoria = async (nome, paiId = null) => {
-    await axios.post(`${API}/estoque/categorias`, { nome: nome.trim(), pai_id: paiId });
-    carregarCategorias();
+    setCatErro('');
+    try {
+      await axios.post(`${API}/estoque/categorias`, { nome: nome.trim(), pai_id: paiId });
+      carregarCategorias();
+    } catch (ex) {
+      setCatErro(ex.response?.data?.error || 'Erro ao criar categoria');
+    }
   };
 
   const deletarCategoria = async (id) => {
@@ -547,12 +553,14 @@ export default function PrevisaoComprasPage() {
       </div>
 
       {catModalAberto && (
-        <Modal title="Gerenciar Categorias" onClose={() => setCatModalAberto(false)} size={480}>
+        <Modal title="Gerenciar Categorias" onClose={() => { setCatModalAberto(false); setCatErro(''); }} size={480}>
           <div className="modal-body">
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
               Ex.: crie a categoria <strong>Lubrificante</strong> e as subcategorias <strong>Primeira Linha</strong> e <strong>Segunda Linha</strong>.
               Depois atribua cada produto na coluna "Categoria" da tabela.
             </div>
+
+            {catErro && <div className="alert alert-error">{catErro}</div>}
 
             {arvoreCategorias.length === 0 && (
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Nenhuma categoria cadastrada ainda.</div>
@@ -564,7 +572,7 @@ export default function PrevisaoComprasPage() {
             <NovaCategoriaRaiz onAdd={adicionarCategoria} />
           </div>
           <div className="modal-foot">
-            <button className="btn btn-primary" onClick={() => setCatModalAberto(false)}>Fechar</button>
+            <button className="btn btn-primary" onClick={() => { setCatModalAberto(false); setCatErro(''); }}>Fechar</button>
           </div>
         </Modal>
       )}
