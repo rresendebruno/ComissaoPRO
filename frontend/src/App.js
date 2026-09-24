@@ -16,6 +16,7 @@ import RelatorioFinanceiroPage from './pages/RelatorioFinanceiroPage';
 import IgnoradosPage from './pages/IgnoradosPage';
 import LucroLiquidoPage from './pages/LucroLiquidoPage';
 import AnaliseLLPage from './pages/AnaliseLLPage';
+import PrevisaoComprasPage from './pages/PrevisaoComprasPage';
 
 function Guard({ children, admin }) {
   const { user, loading } = useAuth();
@@ -39,6 +40,7 @@ export default function App() {
             <Route index element={<DashboardPage />} />
             <Route path="lucro-liquido" element={<LucroLiquidoPage />} />
             <Route path="analise-ll" element={<AnaliseLLPage />} />
+            <Route path="previsao-compras" element={<PrevisaoComprasPage />} />
             <Route path="periodos" element={<PeriodosPage />} />
             <Route path="periodos/:id" element={<PeriodoDetailPage />} />
             <Route path="comissoes" element={<ComissoesPage />} />

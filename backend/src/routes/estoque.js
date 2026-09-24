@@ -1,0 +1,298 @@
+/**
+ * Previsão de Compras / Controle de Estoque
+ * GET  /api/estoque/previsao   → saída, média, tendência e sugestão de compra por produto
+ * PUT  /api/estoque/produto    → atualiza estoque atual e prazo de reposição de um produto
+ * POST /api/estoque/importar   → importa estoque atual em massa via arquivo (CSV/XLSX)
+ *
+ * Base de dados: tabela `vendas` (produtos vendidos por período de apuração).
+ * Cada período tem data_inicio/data_fim; a média diária é calculada dividindo
+ * a soma vendida pela soma de dias dos períodos considerados.
+ */
+
+const router = require('express').Router();
+const multer = require('multer');
+const XLSX = require('xlsx');
+const { query } = require('../db');
+const { auth, adminOnly } = require('../middleware/auth');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+const N = v => (v == null ? 0 : Number(v) || 0);
+const MS_DIA = 24 * 60 * 60 * 1000;
+
+function diasEntre(a, b) {
+  return Math.max(1, Math.round((new Date(b) - new Date(a)) / MS_DIA) + 1);
+}
+
+// ── Helpers de importação (CSV/XLSX) ───────────────────────────────────────────
+
+function parseCSVLine(line, delim) {
+  const result = [];
+  let cur = '', inQ = false;
+  for (const ch of line) {
+    if (ch === '"') inQ = !inQ;
+    else if (ch === delim && !inQ) { result.push(cur.trim()); cur = ''; }
+    else cur += ch;
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+function toNum(v) {
+  if (v == null || v === '-') return 0;
+  if (typeof v === 'number') return v;
+  const s = String(v).replace(/[R$\s]/g, '').trim();
+  if (!s || s === '-') return 0;
+  return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+}
+
+function linhasDoArquivo(arquivo) {
+  const ext = arquivo.originalname.split('.').pop().toLowerCase();
+  if (ext === 'xlsx' || ext === 'xls') {
+    const wb = XLSX.read(arquivo.buffer, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  }
+  if (ext === 'csv') {
+    let text = arquivo.buffer.toString('utf8');
+    if (text.includes('�')) text = arquivo.buffer.toString('latin1');
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = text.split('\n').filter(l => l.trim());
+    if (!lines.length) return [];
+    const delim = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
+    return lines.map(l => parseCSVLine(l, delim));
+  }
+  return null; // extensão não suportada
+}
+
+// ── Previsão de compras ────────────────────────────────────────────────────────
+
+router.get('/previsao', auth, async (req, res) => {
+  const postoId       = req.query.posto_id ? Number(req.query.posto_id) : null;
+  const nPeriodos      = Math.min(Math.max(Number(req.query.periodos) || 6, 2), 24);
+  const coberturaDias  = Math.min(Math.max(Number(req.query.cobertura_dias) || 7, 1), 90);
+
+  // Últimos N períodos (mais recentes primeiro)
+  const { rows: periodos } = await query(
+    `SELECT id, nome, data_inicio, data_fim FROM periodos ORDER BY data_fim DESC LIMIT $1`,
+    [nPeriodos]
+  );
+  if (!periodos.length) return res.json({ periodos: [], produtos: [], coberturaDias, totalDias: 0 });
+
+  const periodoIds   = periodos.map(p => p.id);
+  const maisRecenteId = periodos[0].id;
+  const totalDias     = periodos.reduce((s, p) => s + diasEntre(p.data_inicio, p.data_fim), 0);
+  const diasRecente    = diasEntre(periodos[0].data_inicio, periodos[0].data_fim);
+  const diasAnteriores  = totalDias - diasRecente;
+  const hoje = new Date();
+
+  // Soma de vendas por produto x período
+  const { rows: vendas } = await query(
+    `SELECT produto, periodo_id, SUM(quantidade) AS qtd
+     FROM vendas
+     WHERE periodo_id = ANY($1) ${postoId ? 'AND posto_id = $2' : ''}
+     GROUP BY produto, periodo_id`,
+    postoId ? [periodoIds, postoId] : [periodoIds]
+  );
+
+  // Estoque configurado (só faz sentido por posto específico)
+  let estoqueMap = {};
+  if (postoId) {
+    const { rows: estoqueRows } = await query(
+      `SELECT produto, estoque_atual, prazo_reposicao_dias FROM estoque_produtos WHERE posto_id = $1`,
+      [postoId]
+    );
+    for (const r of estoqueRows) estoqueMap[r.produto] = r;
+  }
+
+  // Agrega por produto
+  const porProduto = {};
+  for (const v of vendas) {
+    if (!porProduto[v.produto]) porProduto[v.produto] = { produto: v.produto, total: 0, recente: 0, anteriores: 0, ultimoPeriodoComVenda: null };
+    const p = porProduto[v.produto];
+    const qtd = N(v.qtd);
+    p.total += qtd;
+    if (v.periodo_id === maisRecenteId) p.recente += qtd;
+    else p.anteriores += qtd;
+    if (qtd > 0) {
+      const per = periodos.find(pe => pe.id === v.periodo_id);
+      if (per && (!p.ultimoPeriodoComVenda || new Date(per.data_fim) > new Date(p.ultimoPeriodoComVenda)))
+        p.ultimoPeriodoComVenda = per.data_fim;
+    }
+  }
+
+  const produtos = Object.values(porProduto).map(p => {
+    const mediaDiaria     = totalDias > 0 ? p.total / totalDias : 0;
+    const mediaRecente     = diasRecente > 0 ? p.recente / diasRecente : 0;
+    const mediaAnteriores  = diasAnteriores > 0 ? p.anteriores / diasAnteriores : 0;
+    const tendenciaPct     = mediaAnteriores > 0
+      ? ((mediaRecente - mediaAnteriores) / mediaAnteriores) * 100
+      : (mediaRecente > 0 ? 100 : 0);
+    const diasSemSaida = p.ultimoPeriodoComVenda
+      ? Math.round((hoje - new Date(p.ultimoPeriodoComVenda)) / MS_DIA)
+      : null;
+
+    const estoqueCfg      = estoqueMap[p.produto] || null;
+    const estoqueAtual     = estoqueCfg ? N(estoqueCfg.estoque_atual) : null;
+    const prazoReposicao   = estoqueCfg ? Number(estoqueCfg.prazo_reposicao_dias) : 3;
+    const estoqueMinimo    = mediaDiaria * coberturaDias;
+    const pontoPedido      = mediaDiaria * (prazoReposicao + coberturaDias);
+    const sugestaoCompra   = estoqueAtual != null ? Math.max(0, pontoPedido - estoqueAtual) : null;
+
+    let status = 'sem_config';
+    if (estoqueAtual != null) {
+      const estoqueSeguranca = mediaDiaria * prazoReposicao;
+      if (estoqueAtual <= estoqueSeguranca) status = 'critico';
+      else if (estoqueAtual < pontoPedido) status = 'comprar';
+      else status = 'ok';
+    }
+
+    return {
+      produto: p.produto,
+      qtdTotal: p.total,
+      mediaDiaria,
+      tendenciaPct,
+      diasSemSaida,
+      estoqueAtual,
+      prazoReposicaoDias: prazoReposicao,
+      estoqueMinimoSugerido: estoqueMinimo,
+      pontoPedido,
+      sugestaoCompra,
+      status,
+    };
+  }).sort((a, b) => b.qtdTotal - a.qtdTotal);
+
+  res.json({
+    periodos: periodos.map(p => ({ id: p.id, nome: p.nome, data_inicio: p.data_inicio, data_fim: p.data_fim })),
+    coberturaDias,
+    totalDias,
+    produtos,
+  });
+});
+
+// ── Atualiza estoque atual / prazo de reposição de um produto ─────────────────
+
+router.put('/produto', auth, adminOnly, async (req, res) => {
+  const { posto_id, produto, estoque_atual, prazo_reposicao_dias } = req.body;
+  if (!posto_id || !produto) return res.status(400).json({ error: 'posto_id e produto são obrigatórios' });
+
+  const { rows } = await query(
+    `INSERT INTO estoque_produtos (posto_id, produto, estoque_atual, prazo_reposicao_dias, updated_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (posto_id, produto)
+     DO UPDATE SET estoque_atual = $3, prazo_reposicao_dias = $4, updated_at = NOW()
+     RETURNING *`,
+    [posto_id, produto.trim(), N(estoque_atual), Math.max(0, Number(prazo_reposicao_dias) || 3)]
+  );
+  res.json(rows[0]);
+});
+
+// ── Importa estoque atual em massa (CSV/XLSX) ──────────────────────────────────
+// Colunas esperadas: B = chave da empresa, U = produto, AA = quantidade em estoque
+
+router.post('/importar', auth, adminOnly, upload.single('arquivo'), async (req, res) => {
+  const arquivo = req.file;
+  if (!arquivo) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+
+  const linhas = linhasDoArquivo(arquivo);
+  if (linhas === null) return res.status(400).json({ error: 'Formato de arquivo não suportado. Use CSV ou XLSX.' });
+  if (!linhas.length) return res.status(400).json({ error: 'Arquivo vazio' });
+
+  const { rows: postosDB } = await query('SELECT id, codigo, chave_empresa FROM postos WHERE ativo=true');
+  const postoIdx = {};
+  for (const p of postosDB) {
+    if (p.chave_empresa) postoIdx[p.chave_empresa.trim().toLowerCase()] = p;
+  }
+
+  const diagnostico = { semChave: 0, semProduto: 0, semPosto: new Set(), ok: 0, amostra: null };
+  // Map "postoId|produto" -> quantidade acumulada
+  const itensMap = new Map();
+
+  for (let i = 1; i < linhas.length; i++) { // linha 0 = cabeçalho
+    const cols = linhas[i];
+    if (!cols || !cols.length) continue;
+
+    const chave      = String(cols[1]  ?? '').trim().toLowerCase(); // col B
+    const produto     = String(cols[20] ?? '').trim();               // col U
+    const quantidade  = toNum(cols[26]);                             // col AA
+
+    if (i === 1) diagnostico.amostra = { totalCols: cols.length, colB: cols[1], colU: cols[20], colAA: cols[26] };
+
+    if (!chave)   { diagnostico.semChave++;   continue; }
+    if (!produto) { diagnostico.semProduto++; continue; }
+
+    const posto = postoIdx[chave];
+    if (!posto) { diagnostico.semPosto.add(chave); continue; }
+
+    const key = `${posto.id}|${produto}`;
+    itensMap.set(key, {
+      postoId: posto.id,
+      produto,
+      quantidade: (itensMap.get(key)?.quantidade || 0) + quantidade,
+    });
+    diagnostico.ok++;
+  }
+
+  console.log('[Estoque Import]', arquivo.originalname, {
+    totalLinhas: linhas.length - 1,
+    amostra: diagnostico.amostra,
+    semChave: diagnostico.semChave,
+    semProduto: diagnostico.semProduto,
+    semPosto: [...diagnostico.semPosto].slice(0, 5),
+    itensGerados: itensMap.size,
+  });
+
+  if (!itensMap.size) {
+    return res.json({
+      success: false, postosAtualizados: 0, produtosAtualizados: 0, zerados: 0,
+      erros: diagnostico.semChave + diagnostico.semProduto + diagnostico.semPosto.size,
+      message: 'Nenhum item válido encontrado. Verifique as colunas B (chave), U (produto) e AA (quantidade).',
+    });
+  }
+
+  const itens = [...itensMap.values()];
+  const porPosto = new Map();
+  for (const it of itens) {
+    if (!porPosto.has(it.postoId)) porPosto.set(it.postoId, []);
+    porPosto.get(it.postoId).push(it);
+  }
+
+  let produtosAtualizados = 0;
+  let zerados = 0;
+
+  for (const [postoId, itensPosto] of porPosto) {
+    const BATCH = 200;
+    for (let i = 0; i < itensPosto.length; i += BATCH) {
+      const batch = itensPosto.slice(i, i + BATCH);
+      const vals = batch.map((_, j) => `($${j*3+1},$${j*3+2},$${j*3+3},NOW())`).join(',');
+      await query(
+        `INSERT INTO estoque_produtos (posto_id, produto, estoque_atual, updated_at)
+         VALUES ${vals}
+         ON CONFLICT (posto_id, produto)
+         DO UPDATE SET estoque_atual = EXCLUDED.estoque_atual, updated_at = NOW()`,
+        batch.flatMap(it => [postoId, it.produto, it.quantidade])
+      );
+      produtosAtualizados += batch.length;
+    }
+
+    // Produtos previamente cadastrados que não vieram nesta importação → zera estoque
+    const nomesImportados = itensPosto.map(it => it.produto);
+    const { rowCount } = await query(
+      `UPDATE estoque_produtos SET estoque_atual = 0, updated_at = NOW()
+       WHERE posto_id = $1 AND produto <> ALL($2) AND estoque_atual <> 0`,
+      [postoId, nomesImportados]
+    );
+    zerados += rowCount;
+  }
+
+  res.json({
+    success: true,
+    postosAtualizados: porPosto.size,
+    produtosAtualizados,
+    zerados,
+    erros: diagnostico.semChave + diagnostico.semProduto + diagnostico.semPosto.size,
+    message: `Estoque atualizado: ${produtosAtualizados} produtos em ${porPosto.size} posto(s). ${zerados > 0 ? `${zerados} produtos zerados (não vieram no arquivo).` : ''}`,
+  });
+});
+
+module.exports = router;

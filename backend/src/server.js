@@ -16,6 +16,7 @@ app.use('/api/relatorios', require('./routes/relatorios'));
 app.use('/api/ignorados',     require('./routes/ignorados'));
 app.use('/api/lucro-liquido',    require('./routes/lucroLiquido'));
 app.use('/api/metas-trimestre', require('./routes/metasTrimestre'));
+app.use('/api/estoque',        require('./routes/estoque'));
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date() }));

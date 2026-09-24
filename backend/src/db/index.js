@@ -220,6 +220,19 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_ll_itens_posto ON ll_itens(posto_id);
   `);
 
+  // Tabela de controle de estoque (previsão de compras)
+  await query(`
+    CREATE TABLE IF NOT EXISTS estoque_produtos (
+      id                    SERIAL PRIMARY KEY,
+      posto_id              INTEGER REFERENCES postos(id) ON DELETE CASCADE,
+      produto               VARCHAR(500) NOT NULL,
+      estoque_atual         NUMERIC(12,3) NOT NULL DEFAULT 0,
+      prazo_reposicao_dias  INTEGER NOT NULL DEFAULT 3,
+      updated_at            TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(posto_id, produto)
+    );
+  `);
+
   const { rows } = await query(`SELECT id FROM users WHERE username = 'admin'`);
   if (rows.length === 0) {
     const bcrypt = require('bcryptjs');
